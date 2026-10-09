@@ -1,9 +1,4 @@
 #!/bin/sh
-# Init-скрипт для Sing-box Manager на Keenetic (Entware).
-# Положить в /opt/etc/init.d/S99singbox-manager
-#
-# ВАЖНО: на Keenetic нет nohup. Определяем процесс по ps, а не по PID-файлу.
-
 BIN=/opt/bin/singbox-manager
 LOGFILE=/opt/var/log/singbox-manager.log
 ADDR=":9091"
@@ -44,10 +39,6 @@ case "$1" in
         else
             echo "singbox-manager не запущен"
         fi
-        ;;
-    *)
-        echo "Использование: $0 {start|stop|restart|status}"
-        exit 1
         ;;
 esac
 
