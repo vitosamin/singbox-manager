@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   build:
-    name: Build & Release
+    name: Build and Release
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -30,85 +30,52 @@ jobs:
         id: version
         run: echo "VERSION=$(cat VERSION)" >> $GITHUB_OUTPUT
 
-      - name: Build ARM64 (Keenetic aarch64)
+      - name: Build ARM64
         env:
-          CGO_ENABLED: 0
+          CGO_ENABLED: "0"
           GOOS: linux
           GOARCH: arm64
         run: |
-          go build \
-            -trimpath \
-            -ldflags="-s -w -X main.Version=${{ steps.version.outputs.VERSION }}" \
-            -o dist/singbox-manager-arm64 \
-            ./cmd/manager
+          go build -trimpath -ldflags="-s -w -X main.Version=${{ steps.version.outputs.VERSION }}" -o dist/singbox-manager-arm64 ./cmd/manager
 
-      - name: Build AMD64 (для локального теста)
+      - name: Build AMD64
         env:
-          CGO_ENABLED: 0
+          CGO_ENABLED: "0"
           GOOS: linux
           GOARCH: amd64
         run: |
-          go build \
-            -trimpath \
-            -ldflags="-s -w -X main.Version=${{ steps.version.outputs.VERSION }}" \
-            -o dist/singbox-manager-amd64 \
-            ./cmd/manager
+          go build -trimpath -ldflags="-s -w -X main.Version=${{ steps.version.outputs.VERSION }}" -o dist/singbox-manager-amd64 ./cmd/manager
 
-      - name: Build MIPSLE (старые Keenetic)
+      - name: Build MIPSLE
         env:
-          CGO_ENABLED: 0
+          CGO_ENABLED: "0"
           GOOS: linux
           GOARCH: mipsle
           GOMIPS: softfloat
         run: |
-          go build \
-            -trimpath \
-            -ldflags="-s -w -X main.Version=${{ steps.version.outputs.VERSION }}" \
-            -o dist/singbox-manager-mipsle \
-            ./cmd/manager
+          go build -trimpath -ldflags="-s -w -X main.Version=${{ steps.version.outputs.VERSION }}" -o dist/singbox-manager-mipsle ./cmd/manager
 
-      - name: Show binary info
+      - name: Show binaries
         run: |
           ls -lh dist/
-          file dist/*
+          file dist/* || true
 
-      - name: Generate checksums
+      - name: Checksums
         run: |
           cd dist
-          sha256sum singbox-manager-* > SHA256SUMS
+          sha256sum singbox-manager-arm64 singbox-manager-amd64 singbox-manager-mipsle > SHA256SUMS
           cat SHA256SUMS
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           name: "Sing-box Manager ${{ steps.version.outputs.VERSION }}"
-          body: |
-            ## Sing-box Manager ${{ steps.version.outputs.VERSION }}
-
-            Установка на роутер (Keenetic с Entware):
-
-            ```sh
-            opkg update
-            wget -qO- https://github.com/vitosamin/singbox-manager/raw/main/scripts/install.sh | sh
-После установки открой http://<IP-роутера>:9091.
-Пароль по умолчанию: admin (смени сразу в Настройках).
-
-Что в релизе
-singbox-manager-arm64 — для современных Keenetic (Giga, Ultra, Hopper, Peak)
-
-singbox-manager-mipsle — для старых Keenetic (mips)
-
-singbox-manager-amd64 — для Ubuntu/теста
-
-SHA256SUMS — контрольные суммы
-
-Изменения
-См. CHANGELOG.md.
-files: |
-dist/singbox-manager-arm64
-dist/singbox-manager-mipsle
-dist/singbox-manager-amd64
-dist/SHA256SUMS
-draft: false
-prerelease: false
-fail_on_unmatched_files: true
+          body: "Release ${{ steps.version.outputs.VERSION }}. См. CHANGELOG.md в репозитории."
+          files: |
+            dist/singbox-manager-arm64
+            dist/singbox-manager-mipsle
+            dist/singbox-manager-amd64
+            dist/SHA256SUMS
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true
