@@ -66,83 +66,58 @@ echo "Устанавливаем в $BIN_PATH ..."
 mv singbox-manager.new "$BIN_PATH"
 chmod +x "$BIN_PATH"
 
-# --- Каталог данных ---
+# --- Каталоги ---
 mkdir -p "$DATA_DIR"
+mkdir -p /opt/var/run /opt/var/log
 
 # --- Init-скрипт ---
 echo "Устанавливаем init-скрипт в $INIT_PATH ..."
 cat > "$INIT_PATH" << 'INIT_EOF'
 #!/bin/sh
+# Init-скрипт для Sing-box Manager на Keenetic (Entware).
+# ВАЖНО: на Keenetic нет nohup. Определяем процесс по ps.
+
 BIN=/opt/bin/singbox-manager
-PIDFILE=/opt/var/run/singbox-manager.pid
 LOGFILE=/opt/var/log/singbox-manager.log
 ADDR=":9091"
 
-is_running() {
-    if [ -f "$PIDFILE" ]; then
-        PID=$(cat "$PIDFILE")
-        if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
-            return 0
-        fi
-    fi
-    return 1
-}
-
-start() {
-    if is_running; then
-        echo "singbox-manager уже запущен (PID $(cat $PIDFILE))"
-        return 0
-    fi
-    echo "Запуск singbox-manager..."
-    mkdir -p /opt/var/run /opt/var/log
-    nohup $BIN -addr $ADDR > $LOGFILE 2>&1 &
-    echo $! > $PIDFILE
-    sleep 1
-    if is_running; then
-        echo "OK, PID $(cat $PIDFILE)"
-        return 0
-    fi
-    echo "ОШИБКА: не удалось запустить"
-    return 1
-}
-
-stop() {
-    if ! is_running; then
-        echo "singbox-manager не запущен"
-        return 0
-    fi
-    PID=$(cat $PIDFILE)
-    echo "Остановка singbox-manager (PID $PID)..."
-    kill "$PID" 2>/dev/null
-    sleep 1
-    if is_running; then
-        kill -9 "$PID" 2>/dev/null
-    fi
-    rm -f "$PIDFILE"
-    killall sing-box 2>/dev/null
-    echo "OK"
-}
-
-restart() {
-    stop
-    sleep 1
-    start
-}
-
-status() {
-    if is_running; then
-        echo "singbox-manager работает (PID $(cat $PIDFILE))"
-        return 0
-    fi
-    echo "singbox-manager не запущен"
-    return 1
-}
-
 case "$1" in
-    start)   start ;;
-    stop)    stop ;;
-    restart) restart ;;
-    status)  status ;;
+    start)
+        if ps -w | grep -v grep | grep -q "$BIN"; then
+            echo "singbox-manager уже запущен"
+            exit 0
+        fi
+        echo "Запуск singbox-manager..."
+        mkdir -p /opt/var/log
+        $BIN -addr $ADDR > $LOGFILE 2>&1 &
+        sleep 3
+        if ps -w | grep -v grep | grep -q "$BIN"; then
+            echo "OK"
+        else
+            echo "ОШИБКА. Лог:"
+            cat $LOGFILE
+            exit 1
+        fi
+        ;;
+    stop)
+        echo "Остановка..."
+        killall singbox-manager 2>/dev/null
+        killall sing-box 2>/dev/null
+        rm -f /opt/var/run/singbox-manager.pid
+        echo "OK"
+        ;;
+    restart)
+        $0 stop
+        sleep 2
+        $0 start
+        ;;
+    status)
+        if ps -w | grep -v grep | grep -q "$BIN"; then
+            echo "singbox-manager работает"
+        else
+            echo "singbox-manager не запущен"
+        fi
+        ;;
     *)
         echo "Использование: $0 {start|stop|restart|status}"
         exit 1
