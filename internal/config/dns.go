@@ -10,10 +10,10 @@ import (
 // DNSServer — один DNS-сервер в конфиге Sing-box.
 type DNSServer struct {
 	Tag     string `json:"tag"`
-	Type    string `json:"type"`             // udp, tcp, tls, https, quic
+	Type    string `json:"type"`
 	Server  string `json:"server"`
 	Port    int    `json:"port,omitempty"`
-	Detour  string `json:"detour,omitempty"` // через какой outbound (например "direct")
+	Detour  string `json:"detour,omitempty"`
 	Enabled bool   `json:"enabled"`
 	ViaVPN  bool   `json:"via_vpn"`
 	Remark  string `json:"remark,omitempty"`
@@ -87,8 +87,10 @@ func DetectSystemDNS() string {
 // BuildDNS собирает секцию "dns" для config.json.
 // proxyDetour — имя VPN-селектора (например "proxy-default").
 //
-// КЛЮЧЕВОЕ: для серверов БЕЗ via_vpn добавляем "detour": "direct",
-// чтобы DNS-запросы шли напрямую через ppp0, а не через TUN (иначе петля).
+// ВАЖНО: НЕ ставим detour: "direct" — Sing-box 1.14 падает
+// с "detour to an empty direct outbound makes no sense".
+// Для серверов без VPN — detour не указываем вообще.
+// Они пойдут через main routing table (ppp0) автоматически.
 func (c DNSConfig) BuildDNS(proxyDetour string) map[string]interface{} {
 	servers := []map[string]interface{}{}
 	rules := []map[string]interface{}{}
@@ -107,12 +109,10 @@ func (c DNSConfig) BuildDNS(proxyDetour string) map[string]interface{} {
 			server["server_port"] = s.Port
 		}
 
-		// DNS через VPN — только если via_vpn=true и есть proxyDetour
+		// detour указываем ТОЛЬКО для VPN-серверов.
+		// Для остальных — не указываем (Sing-box сам пойдёт через main).
 		if s.ViaVPN && proxyDetour != "" {
 			server["detour"] = proxyDetour
-		} else {
-			// ВСЁ ОСТАЛЬНОЕ — напрямую (не через TUN)
-			server["detour"] = "direct"
 		}
 		servers = append(servers, server)
 	}
