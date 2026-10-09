@@ -77,58 +77,36 @@ func Generate(
 
 	outbounds := buildOutbounds(proxies, groups)
 
-	// Правила маршрутизации.
-	// ВАЖНО: первое правило — весь private-трафик идёт напрямую.
-	// Это защищает доступ к роутеру, локальной сети, AdGuard.
 	rules := []RouteRule{
-		{
-			IPIsPrivate: true,
-			Outbound:    "direct",
-		},
+		{IPIsPrivate: true, Outbound: "direct"},
 	}
 
-	// 1. Устройства
 	for _, dr := range BuildDeviceRules(devices) {
 		ipcidr, _ := dr["ip_cidr"].([]string)
 		outbound, _ := dr["outbound"].(string)
-		rules = append(rules, RouteRule{
-			IPCIDR:   ipcidr,
-			Outbound: outbound,
-		})
+		rules = append(rules, RouteRule{IPCIDR: ipcidr, Outbound: outbound})
 	}
 
-	// 2. Каталог
 	for _, tag := range ruleTags {
-		rules = append(rules, RouteRule{
-			RuleSet:  []string{tag},
-			Outbound: resolveTargetGroup(groups, tag),
-		})
+		rules = append(rules, RouteRule{RuleSet: []string{tag}, Outbound: resolveTargetGroup(groups, tag)})
 	}
 
-	// 3. Свои правила
 	for _, tag := range customTags {
 		r := findCustomRule(customRules, tag)
 		outbound := resolveTargetGroup(groups, tag)
 		if r != nil && r.Outbound != "" {
 			outbound = r.Outbound
 		}
-		rules = append(rules, RouteRule{
-			RuleSet:  []string{tag},
-			Outbound: outbound,
-		})
+		rules = append(rules, RouteRule{RuleSet: []string{tag}, Outbound: outbound})
 	}
 
-	// 4. Свои .srs
 	for _, tag := range srsTags {
 		s := findCustomSRS(customSRS, tag)
 		outbound := resolveTargetGroup(groups, tag)
 		if s != nil && s.Outbound != "" {
 			outbound = s.Outbound
 		}
-		rules = append(rules, RouteRule{
-			RuleSet:  []string{tag},
-			Outbound: outbound,
-		})
+		rules = append(rules, RouteRule{RuleSet: []string{tag}, Outbound: outbound})
 	}
 
 	finalOutbound := "direct"
@@ -412,10 +390,9 @@ func buildTransport(p subscription.Proxy) map[string]interface{} {
 	return nil
 }
 
-// buildInbounds — TUN с route_exclude_address.
-// ВАЖНО: route_exclude_address защищает доступ к локальной сети.
-// Трафик к 192.168.x.x, 10.x.x.x, 172.16-31.x.x НЕ идёт в туннель,
-// поэтому SSH и веб-интерфейс роутера остаются доступны.
+// buildInbounds — TUN с auto_route: false.
+// Маршруты не трогаем — их добавим сами через iptables MARK + ip rule + ip route table 100.
+// Схема как в SSClash-Go (см. режим TUN для Keenetic).
 func buildInbounds() []map[string]interface{} {
 	return []map[string]interface{}{
 		{
@@ -424,20 +401,10 @@ func buildInbounds() []map[string]interface{} {
 			"interface_name": "singtun0",
 			"address":        []string{"172.19.0.1/30"},
 			"mtu":            1500,
-			"auto_route":     true,
+			"auto_route":     false,
+			"auto_redirect":  false,
 			"strict_route":   false,
 			"stack":          "system",
-			// Ключевое: исключения маршрутов для локальных сетей.
-			"route_exclude_address": []string{
-				"0.0.0.0/8",
-				"10.0.0.0/8",
-				"127.0.0.0/8",
-				"169.254.0.0/16",
-				"172.16.0.0/12",
-				"192.168.0.0/16",
-				"224.0.0.0/4",
-				"240.0.0.0/4",
-			},
 		},
 	}
 }

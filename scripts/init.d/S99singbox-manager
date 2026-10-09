@@ -3,6 +3,17 @@ BIN=/opt/bin/singbox-manager
 LOGFILE=/opt/var/log/singbox-manager.log
 ADDR=":9091"
 
+cleanup_rules() {
+    for i in br0 br1 br2; do
+        iptables -t mangle -D PREROUTING -i "$i" -j SINGBOX_MARK 2>/dev/null
+    done
+    iptables -t mangle -F SINGBOX_MARK 2>/dev/null
+    iptables -t mangle -X SINGBOX_MARK 2>/dev/null
+    ip rule del fwmark 0x1 table 100 2>/dev/null
+    ip route del default dev singtun0 table 100 2>/dev/null
+    rm -f /opt/etc/ndm/netfilter.d/50-singbox.sh
+}
+
 case "$1" in
     start)
         if ps -w | grep -v grep | grep -q "$BIN"; then
@@ -10,6 +21,7 @@ case "$1" in
             exit 0
         fi
         echo "Запуск singbox-manager..."
+        cleanup_rules
         mkdir -p /opt/var/log
         $BIN -addr $ADDR > $LOGFILE 2>&1 &
         sleep 3
@@ -23,6 +35,7 @@ case "$1" in
         ;;
     stop)
         echo "Остановка..."
+        cleanup_rules
         killall singbox-manager 2>/dev/null
         killall sing-box 2>/dev/null
         rm -f /opt/var/run/singbox-manager.pid
@@ -39,6 +52,10 @@ case "$1" in
         else
             echo "singbox-manager не запущен"
         fi
+        ;;
+    *)
+        echo "Использование: $0 {start|stop|restart|status}"
+        exit 1
         ;;
 esac
 

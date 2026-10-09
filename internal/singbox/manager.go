@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/shapovalenko/keenetic-singbox-manager/internal/iptables"
 	"github.com/shapovalenko/keenetic-singbox-manager/internal/logger"
 )
 
@@ -171,6 +172,7 @@ func (ringWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// Restart — перезапуск Sing-box + настройка MARK/ip rule.
 func Restart() error {
 	killOld()
 	if _, err := os.Stat(BinaryPath()); err != nil {
@@ -199,25 +201,63 @@ func Restart() error {
 
 	fmt.Printf("[singbox] запущен, PID=%d\n", cmd.Process.Pid)
 
+	// Ждём Clash API
 	deadline := time.Now().Add(10 * time.Second)
 	client := &http.Client{Timeout: 1 * time.Second}
+	apiOK := false
 	for time.Now().Before(deadline) {
 		resp, err := client.Get("http://127.0.0.1:9090/version")
 		if err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
-				fmt.Println("[singbox] Clash API готов")
-				return nil
+				apiOK = true
+				break
 			}
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	fmt.Println("[singbox] предупреждение: Clash API не поднялся")
+
+	if !apiOK {
+		fmt.Println("[singbox] предупреждение: Clash API не поднялся")
+		return nil
+	}
+	fmt.Println("[singbox] Clash API готов")
+
+	// Проверяем, что singtun0 создан
+	tunCreated := false
+	for i := 0; i < 10; i++ {
+		if _, err := os.Stat("/sys/class/net/singtun0"); err == nil {
+			tunCreated = true
+			break
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+	if !tunCreated {
+		fmt.Println("[singbox] предупреждение: singtun0 не создан, MARK не настраиваем")
+		return nil
+	}
+	fmt.Println("[singbox] TUN-интерфейс singtun0 готов")
+
+	// Настраиваем iptables MARK + ip rule + ip route
+	if runtime.GOOS == "linux" {
+		lan := iptables.DetectLANInterface()
+		routerIP := iptables.DetectRouterIP(lan)
+		if err := iptables.Setup(lan, routerIP); err != nil {
+			fmt.Printf("[singbox] предупреждение: iptables: %v\n", err)
+		} else {
+			// Устанавливаем NDMS hook (для Keenetic)
+			_ = iptables.WriteNDMSHook()
+		}
+	}
 	return nil
 }
 
 func Stop() error {
 	killOld()
+	if runtime.GOOS == "linux" {
+		iptables.Cleanup()
+		iptables.RemoveNDMSHook()
+	}
 	return nil
 }
 
@@ -236,4 +276,8 @@ func killOld() {
 	}
 	exec.Command("killall", "sing-box").Run()
 	time.Sleep(300 * time.Millisecond)
+
+	if runtime.GOOS == "linux" {
+		iptables.Cleanup()
+	}
 }
