@@ -65,7 +65,7 @@ func singBoxArgs(subcommand ...string) []string {
 }
 
 // ResolveServerIPs — превращает домены VLESS-серверов в IP-адреса.
-// Используется для исключения из MARK (иначе петля).
+// Нужно для исключения из iptables (иначе петля: сервер → proxy → сервер).
 func ResolveServerIPs(servers []string) []string {
 	var result []string
 	seen := make(map[string]bool)
@@ -75,7 +75,6 @@ func ResolveServerIPs(servers []string) []string {
 			continue
 		}
 
-		// Если это уже IP — добавляем как есть
 		if net.ParseIP(s) != nil {
 			if !seen[s] {
 				result = append(result, s)
@@ -84,7 +83,6 @@ func ResolveServerIPs(servers []string) []string {
 			continue
 		}
 
-		// Резолвим домен
 		ips, err := net.LookupHost(s)
 		if err != nil {
 			fmt.Printf("[singbox] предупреждение: не могу отрезолвить %s: %v\n", s, err)
@@ -209,8 +207,8 @@ func (ringWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// Restart — перезапускает Sing-box и настраивает MARK/FORWARD.
-// serverHosts — список доменов/IP VLESS-серверов для исключения из MARK.
+// Restart — перезапускает Sing-box и настраивает iptables TProxy+REDIRECT.
+// serverHosts — список доменов/IP VLESS-серверов для исключения из iptables.
 func Restart(serverHosts []string) error {
 	killOld()
 	if _, err := os.Stat(BinaryPath()); err != nil {
@@ -261,50 +259,23 @@ func Restart(serverHosts []string) error {
 	}
 	fmt.Println("[singbox] Clash API готов")
 
-	// Проверяем, что singtun0 создан
-	tunCreated := false
-	for i := 0; i < 10; i++ {
-		if _, err := os.Stat("/sys/class/net/singtun0"); err == nil {
-			tunCreated = true
-			break
-		}
-		time.Sleep(300 * time.Millisecond)
-	}
-	if !tunCreated {
-		fmt.Println("[singbox] предупреждение: singtun0 не создан, MARK не настраиваем")
-		return nil
-	}
-	fmt.Println("[singbox] TUN-интерфейс singtun0 готов")
-
-	// Настраиваем iptables
+	// Настраиваем iptables TProxy+REDIRECT
 	if runtime.GOOS == "linux" {
-		ifaces := iptables.DetectLANInterfaces()
-
-		routerIP := "192.168.35.1"
-		for _, i := range ifaces {
-			if strings.HasPrefix(i, "br") {
-				routerIP = iptables.DetectRouterIP(i)
-				break
-			}
-		}
-
 		vlessIPs := ResolveServerIPs(serverHosts)
-		fmt.Printf("[singbox] интерфейсы: %v, router: %s, VLESS-IP: %v\n", ifaces, routerIP, vlessIPs)
+		fmt.Printf("[singbox] VLESS-IP для исключения: %v\n", vlessIPs)
 
-		if err := iptables.Setup(ifaces, routerIP, vlessIPs); err != nil {
+		if err := iptables.Setup(vlessIPs); err != nil {
 			fmt.Printf("[singbox] предупреждение: iptables: %v\n", err)
-		} else {
-			_ = iptables.WriteNDMSHook(vlessIPs)
 		}
 	}
 	return nil
 }
 
+// Stop — останавливает Sing-box и очищает iptables.
 func Stop() error {
 	killOld()
 	if runtime.GOOS == "linux" {
 		iptables.Cleanup()
-		iptables.RemoveNDMSHook()
 	}
 	return nil
 }

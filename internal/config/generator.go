@@ -22,13 +22,13 @@ type RouteRule struct {
 	Outbound    string   `json:"outbound,omitempty"`
 	IPCIDR      []string `json:"ip_cidr,omitempty"`
 	IPIsPrivate bool     `json:"ip_is_private,omitempty"`
+	Network     string   `json:"network,omitempty"`
 }
 
 type Route struct {
 	RuleSet               []RuleSet              `json:"rule_set,omitempty"`
 	Rules                 []RouteRule            `json:"rules,omitempty"`
 	Final                 string                 `json:"final"`
-	AutoDetectInterface   bool                   `json:"auto_detect_interface,omitempty"`
 	DefaultDomainResolver map[string]interface{} `json:"default_domain_resolver,omitempty"`
 }
 
@@ -77,18 +77,27 @@ func Generate(
 
 	outbounds := buildOutbounds(proxies, groups)
 
-	rules := []RouteRule{
-		{IPIsPrivate: true, Outbound: "direct"},
-	}
+	var rules []RouteRule
 
 	for _, dr := range BuildDeviceRules(devices) {
 		ipcidr, _ := dr["ip_cidr"].([]string)
 		outbound, _ := dr["outbound"].(string)
-		rules = append(rules, RouteRule{IPCIDR: ipcidr, Outbound: outbound})
+		rules = append(rules, RouteRule{
+			IPCIDR:   ipcidr,
+			Outbound: outbound,
+		})
 	}
 
+	rules = append(rules, RouteRule{
+		IPIsPrivate: true,
+		Outbound:    "direct",
+	})
+
 	for _, tag := range ruleTags {
-		rules = append(rules, RouteRule{RuleSet: []string{tag}, Outbound: resolveTargetGroup(groups, tag)})
+		rules = append(rules, RouteRule{
+			RuleSet:  []string{tag},
+			Outbound: resolveTargetGroup(groups, tag),
+		})
 	}
 
 	for _, tag := range customTags {
@@ -97,7 +106,10 @@ func Generate(
 		if r != nil && r.Outbound != "" {
 			outbound = r.Outbound
 		}
-		rules = append(rules, RouteRule{RuleSet: []string{tag}, Outbound: outbound})
+		rules = append(rules, RouteRule{
+			RuleSet:  []string{tag},
+			Outbound: outbound,
+		})
 	}
 
 	for _, tag := range srsTags {
@@ -106,7 +118,10 @@ func Generate(
 		if s != nil && s.Outbound != "" {
 			outbound = s.Outbound
 		}
-		rules = append(rules, RouteRule{RuleSet: []string{tag}, Outbound: outbound})
+		rules = append(rules, RouteRule{
+			RuleSet:  []string{tag},
+			Outbound: outbound,
+		})
 	}
 
 	finalOutbound := "direct"
@@ -131,10 +146,9 @@ func Generate(
 		Inbounds:  buildInbounds(),
 		Outbounds: outbounds,
 		Route: Route{
-			RuleSet:             ruleSets,
-			Rules:               rules,
-			Final:               finalOutbound,
-			AutoDetectInterface: true,
+			RuleSet: ruleSets,
+			Rules:   rules,
+			Final:   finalOutbound,
 			DefaultDomainResolver: map[string]interface{}{
 				"server": dnsCfg.DefaultServer,
 			},
@@ -300,9 +314,6 @@ func vlessOutbound(p subscription.Proxy) map[string]interface{} {
 		"type": "vless", "tag": p.Tag, "server": p.Server,
 		"server_port": p.Port, "uuid": p.UUID,
 	}
-	if p.Flow != "" {
-		ob["flow"] = p.Flow
-	}
 	if p.Security == "tls" || p.Security == "reality" {
 		tls := map[string]interface{}{"enabled": true}
 		if p.SNI != "" {
@@ -390,21 +401,26 @@ func buildTransport(p subscription.Proxy) map[string]interface{} {
 	return nil
 }
 
-// buildInbounds — TUN с auto_route: false.
-// Маршруты не трогаем — их добавим сами через iptables MARK + ip rule + ip route table 100.
-// Схема как в SSClash-Go (см. режим TUN для Keenetic).
 func buildInbounds() []map[string]interface{} {
 	return []map[string]interface{}{
 		{
-			"type":           "tun",
-			"tag":            "tun-in",
-			"interface_name": "singtun0",
-			"address":        []string{"172.19.0.1/30"},
-			"mtu":            1500,
-			"auto_route":     false,
-			"auto_redirect":  false,
-			"strict_route":   false,
-			"stack":          "system",
+			"type":        "mixed",
+			"tag":         "mixed-in",
+			"listen":      "127.0.0.1",
+			"listen_port": 1080,
+		},
+		{
+			"type":        "tproxy",
+			"tag":         "tproxy-in",
+			"listen":      "0.0.0.0",
+			"listen_port": 1081,
+			"network":     []string{"tcp", "udp"},
+		},
+		{
+			"type":        "redirect",
+			"tag":         "redirect-in",
+			"listen":      "0.0.0.0",
+			"listen_port": 1082,
 		},
 	}
 }
