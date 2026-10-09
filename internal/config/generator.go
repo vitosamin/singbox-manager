@@ -387,9 +387,6 @@ func shadowsocksOutbound(p subscription.Proxy) map[string]interface{} {
 	}
 }
 
-// buildTransport — ВОТ ТУТ БЫЛА ОПЕЧАТКА.
-// Было: g.GRPCServiceName — g это map, а не Proxy.
-// Стало: p.GRPCServiceName.
 func buildTransport(p subscription.Proxy) map[string]interface{} {
 	switch p.Network {
 	case "ws":
@@ -411,11 +408,25 @@ func buildTransport(p subscription.Proxy) map[string]interface{} {
 	return nil
 }
 
+// buildInbounds создаёт TUN-интерфейс, через который пойдёт весь трафик.
+//
+// На Keenetic важны:
+//   strict_route: false — true ломает соединения на этом железе
+//   stack: system       — меньше памяти, чем gvisor
+//   auto_route: true    — Sing-box сам добавит маршруты
+//
+// MTU 1500 — стандарт для Ethernet. Если будут проблемы с фрагментацией — уменьшить до 1400.
 func buildInbounds() []map[string]interface{} {
 	return []map[string]interface{}{
 		{
-			"type": "mixed", "tag": "mixed-in",
-			"listen": "127.0.0.1", "listen_port": 2080,
+			"type":           "tun",
+			"tag":            "tun-in",
+			"interface_name": "singtun0",
+			"inet4_address":  "172.19.0.1/30",
+			"mtu":            1500,
+			"auto_route":     true,
+			"strict_route":   false,
+			"stack":          "system",
 		},
 	}
 }
