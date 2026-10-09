@@ -128,7 +128,13 @@ func Cleanup() error {
 	run("iptables", "-t", "mangle", "-X", ChainUDP)
 
 	// ip rule + route
-	run("ip", "rule", "del", "fwmark", TProxyMark, "table", TProxyTable)
+	// Удаляем ВСЕ правила fwmark X table Y (могут быть дубликаты от старых версий)
+	for {
+		cmd := exec.Command("ip", "rule", "del", "fwmark", TProxyMark, "table", TProxyTable)
+		if err := cmd.Run(); err != nil {
+			break
+		}
+	}
 	run("ip", "route", "del", "local", "default", "dev", "lo", "table", TProxyTable)
 
 	// NDMS hook
@@ -205,7 +211,7 @@ case "$1" in
         iptables -t nat -X ` + ChainTCP + ` 2>/dev/null
         iptables -t mangle -F ` + ChainUDP + ` 2>/dev/null
         iptables -t mangle -X ` + ChainUDP + ` 2>/dev/null
-        ip rule del fwmark ` + TProxyMark + ` table ` + TProxyTable + ` 2>/dev/null
+        while ip rule del fwmark ` + TProxyMark + ` table ` + TProxyTable + ` 2>/dev/null; do :; done
         ip route del local default dev lo table ` + TProxyTable + ` 2>/dev/null
         echo "OK"
         ;;
@@ -378,6 +384,7 @@ func buildMangleScript(vlessIPs []string) string {
 	sb.WriteString("iptables -t mangle -A PREROUTING -i br0 -p udp -j " + ChainUDP + "\n")
 	sb.WriteString("iptables -t mangle -A PREROUTING -i nwg0 -p udp -j " + ChainUDP + "\n\n")
 
+	sb.WriteString("while ip rule del fwmark " + TProxyMark + " table " + TProxyTable + " 2>/dev/null; do :; done\n")
 	sb.WriteString("ip rule add fwmark " + TProxyMark + " table " + TProxyTable + " 2>/dev/null\n")
 	sb.WriteString("ip route add local default dev lo table " + TProxyTable + " 2>/dev/null\n")
 	sb.WriteString("echo SB_UDP_TRANSIT installed\n")
