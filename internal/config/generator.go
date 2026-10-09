@@ -27,6 +27,7 @@ type Route struct {
 	RuleSet               []RuleSet              `json:"rule_set,omitempty"`
 	Rules                 []RouteRule            `json:"rules,omitempty"`
 	Final                 string                 `json:"final"`
+	AutoDetectInterface   bool                   `json:"auto_detect_interface,omitempty"`
 	DefaultDomainResolver map[string]interface{} `json:"default_domain_resolver,omitempty"`
 }
 
@@ -146,6 +147,8 @@ func Generate(
 			RuleSet: ruleSets,
 			Rules:   rules,
 			Final:   finalOutbound,
+			// auto_detect_interface предотвращает петлю трафика при auto_route
+			AutoDetectInterface: true,
 			DefaultDomainResolver: map[string]interface{}{
 				"server": dnsCfg.DefaultServer,
 			},
@@ -169,13 +172,6 @@ func Generate(
 	fmt.Printf("[config] записан %s\n", outPath)
 	fmt.Printf("  списков: %d предуст + %d custom + %d srs\n", len(enabledIDs), len(customRules), len(customSRS))
 	fmt.Printf("  устройств: %d, outbounds: %d, групп: %d\n", len(devices), len(outbounds), len(groups))
-	for _, r := range rules {
-		if len(r.RuleSet) > 0 {
-			fmt.Printf("    rule_set=%v → %s\n", r.RuleSet, r.Outbound)
-		} else if len(r.IPCIDR) > 0 {
-			fmt.Printf("    ip=%v → %s\n", r.IPCIDR, r.Outbound)
-		}
-	}
 	return nil
 }
 
@@ -408,23 +404,21 @@ func buildTransport(p subscription.Proxy) map[string]interface{} {
 	return nil
 }
 
-// buildInbounds создаёт TUN-интерфейс, через который пойдёт весь трафик.
-//
-// На Keenetic важны:
-//   strict_route: false — true ломает соединения на этом железе
-//   stack: system       — меньше памяти, чем gvisor
-//   auto_route: true    — Sing-box сам добавит маршруты
-//
-// MTU 1500 — стандарт для Ethernet. Если будут проблемы с фрагментацией — уменьшить до 1400.
+// buildInbounds — TUN с новым форматом адресов (sing-box 1.12+).
+//   address вместо inet4_address — старый формат удалён
+//   auto_redirect — на Linux лучше auto_route
+//   stack: system — меньше памяти
 func buildInbounds() []map[string]interface{} {
 	return []map[string]interface{}{
 		{
 			"type":           "tun",
 			"tag":            "tun-in",
 			"interface_name": "singtun0",
-			"inet4_address":  "172.19.0.1/30",
+			// Новый формат: address — массив CIDR
+			"address":        []string{"172.19.0.1/30"},
 			"mtu":            1500,
 			"auto_route":     true,
+			"auto_redirect":  true,
 			"strict_route":   false,
 			"stack":          "system",
 		},
