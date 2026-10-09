@@ -9,20 +9,20 @@ import (
 
 // DNSServer — один DNS-сервер в конфиге Sing-box.
 type DNSServer struct {
-	Tag     string `json:"tag"`              // внутренний тег (dns-router, dns-remote, ...)
+	Tag     string `json:"tag"`
 	Type    string `json:"type"`             // udp, tcp, tls, https, quic
-	Server  string `json:"server"`           // IP или домен
-	Port    int    `json:"port,omitempty"`   // порт (опционально)
-	Detour  string `json:"detour,omitempty"` // через какой outbound идти (опционально)
-	Enabled bool   `json:"enabled"`          // включён/выключен
-	ViaVPN  bool   `json:"via_vpn"`          // идти через VPN-туннель
-	Remark  string `json:"remark,omitempty"` // человекочитаемое описание
+	Server  string `json:"server"`
+	Port    int    `json:"port,omitempty"`
+	Detour  string `json:"detour,omitempty"` // через какой outbound (например "direct")
+	Enabled bool   `json:"enabled"`
+	ViaVPN  bool   `json:"via_vpn"`
+	Remark  string `json:"remark,omitempty"`
 }
 
 // DNSRule — правило DNS-маршрутизации.
 type DNSRule struct {
-	RuleSet []string `json:"rule_set,omitempty"` // для каких rule-set
-	Server  string   `json:"server"`             // какой DNS использовать
+	RuleSet []string `json:"rule_set,omitempty"`
+	Server  string   `json:"server"`
 }
 
 // DNSConfig — полная конфигурация DNS.
@@ -32,9 +32,7 @@ type DNSConfig struct {
 	DefaultServer string      `json:"default_server"`
 }
 
-// DefaultDNSConfig возвращает конфиг по умолчанию:
-//   - основной DNS = системный (роутер с AdGuard, или systemd-resolved на Ubuntu).
-//   - резервный = 1.1.1.1 через VPN (выключен по умолчанию).
+// DefaultDNSConfig возвращает конфиг по умолчанию.
 func DefaultDNSConfig() DNSConfig {
 	routerDNS := DetectSystemDNS()
 	if routerDNS == "" {
@@ -66,8 +64,6 @@ func DefaultDNSConfig() DNSConfig {
 }
 
 // DetectSystemDNS читает первый nameserver из /etc/resolv.conf.
-// НЕ пропускает 127.0.0.53/54 — Sing-box может работать через
-// systemd-resolved stub, потому что у нас mixed inbound, а не TUN.
 func DetectSystemDNS() string {
 	f, err := os.Open("/etc/resolv.conf")
 	if err != nil {
@@ -88,7 +84,11 @@ func DetectSystemDNS() string {
 	return ""
 }
 
-// BuildDNS собирает секцию "dns" для config.json из DNSConfig.
+// BuildDNS собирает секцию "dns" для config.json.
+// proxyDetour — имя VPN-селектора (например "proxy-default").
+//
+// КЛЮЧЕВОЕ: для серверов БЕЗ via_vpn добавляем "detour": "direct",
+// чтобы DNS-запросы шли напрямую через ppp0, а не через TUN (иначе петля).
 func (c DNSConfig) BuildDNS(proxyDetour string) map[string]interface{} {
 	servers := []map[string]interface{}{}
 	rules := []map[string]interface{}{}
@@ -106,8 +106,13 @@ func (c DNSConfig) BuildDNS(proxyDetour string) map[string]interface{} {
 		if s.Port > 0 {
 			server["server_port"] = s.Port
 		}
+
+		// DNS через VPN — только если via_vpn=true и есть proxyDetour
 		if s.ViaVPN && proxyDetour != "" {
 			server["detour"] = proxyDetour
+		} else {
+			// ВСЁ ОСТАЛЬНОЕ — напрямую (не через TUN)
+			server["detour"] = "direct"
 		}
 		servers = append(servers, server)
 	}

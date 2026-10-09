@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -61,6 +62,42 @@ func singBoxArgs(subcommand ...string) []string {
 		return append([]string{loader, bin}, subcommand...)
 	}
 	return append([]string{bin}, subcommand...)
+}
+
+// ResolveServerIPs — превращает домены VLESS-серверов в IP-адреса.
+// Используется для исключения из MARK (иначе петля).
+func ResolveServerIPs(servers []string) []string {
+	var result []string
+	seen := make(map[string]bool)
+
+	for _, s := range servers {
+		if s == "" {
+			continue
+		}
+
+		// Если это уже IP — добавляем как есть
+		if net.ParseIP(s) != nil {
+			if !seen[s] {
+				result = append(result, s)
+				seen[s] = true
+			}
+			continue
+		}
+
+		// Резолвим домен
+		ips, err := net.LookupHost(s)
+		if err != nil {
+			fmt.Printf("[singbox] предупреждение: не могу отрезолвить %s: %v\n", s, err)
+			continue
+		}
+		for _, ip := range ips {
+			if !seen[ip] {
+				result = append(result, ip)
+				seen[ip] = true
+			}
+		}
+	}
+	return result
 }
 
 func EnsureInstalled() error {
@@ -172,9 +209,9 @@ func (ringWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// Restart — перезапуск Sing-box + настройка MARK/ip rule.
-// Перехватываем трафик из всех LAN и WG-интерфейсов.
-func Restart() error {
+// Restart — перезапускает Sing-box и настраивает MARK/FORWARD.
+// serverHosts — список доменов/IP VLESS-серверов для исключения из MARK.
+func Restart(serverHosts []string) error {
 	killOld()
 	if _, err := os.Stat(BinaryPath()); err != nil {
 		return fmt.Errorf("sing-box не установлен: %w", err)
@@ -239,10 +276,10 @@ func Restart() error {
 	}
 	fmt.Println("[singbox] TUN-интерфейс singtun0 готов")
 
-	// Настраиваем iptables MARK + ip rule + ip route
+	// Настраиваем iptables
 	if runtime.GOOS == "linux" {
 		ifaces := iptables.DetectLANInterfaces()
-		// Определяем IP роутера по первому LAN-интерфейсу
+
 		routerIP := "192.168.35.1"
 		for _, i := range ifaces {
 			if strings.HasPrefix(i, "br") {
@@ -250,12 +287,14 @@ func Restart() error {
 				break
 			}
 		}
-		fmt.Printf("[singbox] интерфейсы для MARK: %v, IP роутера: %s\n", ifaces, routerIP)
 
-		if err := iptables.Setup(ifaces, routerIP); err != nil {
+		vlessIPs := ResolveServerIPs(serverHosts)
+		fmt.Printf("[singbox] интерфейсы: %v, router: %s, VLESS-IP: %v\n", ifaces, routerIP, vlessIPs)
+
+		if err := iptables.Setup(ifaces, routerIP, vlessIPs); err != nil {
 			fmt.Printf("[singbox] предупреждение: iptables: %v\n", err)
 		} else {
-			_ = iptables.WriteNDMSHook()
+			_ = iptables.WriteNDMSHook(vlessIPs)
 		}
 	}
 	return nil
