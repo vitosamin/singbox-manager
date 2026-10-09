@@ -1,0 +1,28 @@
+# Build artifacts
+/dist/
+/bin/
+*.exe
+*.test
+*.out
+
+# Test data (не коммитим)
+/test-data/
+/test-data.backup-*/
+/state.json
+/state.json.bak*
+*.bak
+*.bak[0-9]
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

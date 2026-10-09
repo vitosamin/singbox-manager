@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sing-box VitosaminTM</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="layout" id="layout">
+
+    <aside class="sidebar" id="sidebar">
+        <div class="brand">
+            <div class="brand-logo">⚡</div>
+            <div class="brand-text">
+                <div class="brand-title">Sing-box</div>
+                <div class="brand-sub">VITOSAMINTM</div>
+            </div>
+        </div>
+
+        <div class="nav-section-title">ОСНОВНОЕ</div>
+        <div class="nav-tabs">
+            <a class="nav-tab" data-tab="servers" title="Серверы">
+                <span class="nav-tab-icon">🌐</span><span class="nav-tab-label">Серверы</span>
+                <span class="nav-tab-badge" id="badge-servers">0</span>
+            </a>
+            <a class="nav-tab" data-tab="rules" title="Правила обхода">
+                <span class="nav-tab-icon">📚</span><span class="nav-tab-label">Правила обхода</span>
+                <span class="nav-tab-badge" id="badge-rules">0</span>
+            </a>
+            <a class="nav-tab" data-tab="priorities" title="Приоритеты">
+                <span class="nav-tab-icon">⚡</span><span class="nav-tab-label">Приоритеты</span>
+            </a>
+            <a class="nav-tab" data-tab="devices" title="Устройства">
+                <span class="nav-tab-icon">🖥️</span><span class="nav-tab-label">Устройства</span>
+                <span class="nav-tab-badge" id="badge-devices">0</span>
+            </a>
+        </div>
+
+        <div class="nav-section-title">СИСТЕМА</div>
+        <div class="nav-tabs">
+            <a class="nav-tab" data-tab="dns" title="DNS">
+                <span class="nav-tab-icon">🔍</span><span class="nav-tab-label">DNS</span>
+            </a>
+            <a class="nav-tab" data-tab="sync" title="Синхронизация">
+                <span class="nav-tab-icon">🔄</span><span class="nav-tab-label">Синхронизация</span>
+            </a>
+            <a class="nav-tab" data-tab="settings" title="Настройки">
+                <span class="nav-tab-icon">⚙️</span><span class="nav-tab-label">Настройки</span>
+            </a>
+        </div>
+
+        <div class="nav-section-title">СОСТОЯНИЕ</div>
+        <div class="nav-tabs">
+            <a class="nav-tab" data-tab="monitor" title="Мониторинг">
+                <span class="nav-tab-icon">📊</span><span class="nav-tab-label">Мониторинг</span>
+            </a>
+            <a class="nav-tab" data-tab="logs" title="Журнал">
+                <span class="nav-tab-icon">📜</span><span class="nav-tab-label">Журнал</span>
+            </a>
+        </div>
+
+        <button class="sidebar-toggle" id="sidebar-toggle" title="Свернуть меню">⟨</button>
+    </aside>
+
+    <main class="main">
+        <header class="topbar">
+            <div class="topbar-left">
+                <button class="mobile-menu-btn" id="mobile-menu-btn" title="Меню">☰</button>
+                <div class="topbar-title">
+                    <h1 id="page-title">Серверы</h1>
+                    <p class="topbar-sub" id="page-sub">Управление VPN-серверами</p>
+                </div>
+            </div>
+            <div class="topbar-actions">
+                <div class="theme-switch">
+                    <button data-theme-btn="dark" title="Тёмная">🌙</button>
+                    <button data-theme-btn="light" title="Светлая">☀️</button>
+                    <button data-theme-btn="auto" title="Авто">🖥️</button>
+                </div>
+                <span id="apply-status" class="status"></span>
+                <button id="btn-restart" class="btn" title="Перезапустить Sing-box">🔁 Рестарт</button>
+                <button id="btn-apply" class="btn primary">Применить</button>
+            </div>
+        </header>
+
+        <section class="tab-page" data-page="servers">
+            <div class="actions" style="margin-bottom:14px;">
+                <button id="btn-add-proxy" class="btn primary">+ Добавить сервер</button>
+                <button id="btn-refresh-servers" class="btn">Обновить статус</button>
+                <span id="servers-status" class="status"></span>
+            </div>
+            <div id="server-cards" class="server-cards"></div>
+        </section>
+
+        <section class="tab-page" data-page="rules">
+            <div class="how-it-works">
+                <div class="hiw-title">🧭 Как работает маршрутизация</div>
+                <div class="hiw-steps">
+                    <div class="hiw-step"><b>1. Перехват</b> — весь трафик из LAN идёт в Sing-box (TUN или mixed-inbound).</div>
+                    <div class="hiw-step"><b>2. DNS</b> — домен резолвится через <code>dns-router</code> (AdGuard) или через VPN.</div>
+                    <div class="hiw-step"><b>3. Правила по порядку</b> — устройства → каталог → свои правила → свои .srs → финал.</div>
+                    <div class="hiw-step"><b>4. Группа</b> — если домен попал в список, трафик уходит в селектор группы (например <code>proxy-youtube</code>).</div>
+                    <div class="hiw-step"><b>5. Failover</b> — менеджер мониторит задержки и переключает селектор на живой сервер.</div>
+                    <div class="hiw-step"><b>Всё в реальном времени</b> — правила загружены в память при старте, проверка за миллисекунды.</div>
+                </div>
+            </div>
+
+            <div class="rule-block">
+                <div class="rule-block-head">
+                    <h3>📦 Из каталога</h3>
+                    <div class="section-hint">Готовые списки из репозитория <code>itdoginfo/allow-domains</code></div>
+                </div>
+                <div id="catalog" class="catalog"></div>
+            </div>
+
+            <div class="rule-block">
+                <div class="rule-block-head">
+                    <h3>📝 Свои правила (домены/CIDR)</h3>
+                    <div class="section-hint">Правило создаётся автоматически при сохранении.</div>
+                </div>
+                <div id="custom-rules-list" class="custom-list"></div>
+                <div class="actions">
+                    <button id="btn-add-rule" class="btn">+ Добавить правило</button>
+                    <button id="btn-save-rules" class="btn primary">Сохранить правила</button>
+                    <span id="rules-status" class="status"></span>
+                </div>
+            </div>
+
+            <div class="rule-block">
+                <div class="rule-block-head">
+                    <h3>🌍 Свои .srs URL</h3>
+                    <div class="section-hint">Прямые ссылки на .srs файлы.</div>
+                </div>
+                <div id="custom-srs-list" class="custom-list"></div>
+                <div class="actions">
+                    <button id="btn-add-srs" class="btn">+ Добавить .srs</button>
+                    <button id="btn-save-srs" class="btn primary">Сохранить .srs</button>
+                    <span id="srs-status" class="status"></span>
+                </div>
+            </div>
+        </section>
+
+        <section class="tab-page" data-page="priorities">
+            <div class="section-hint" style="margin-bottom:14px;">
+                Для каждой группы отметь, какие серверы в ней участвуют, и задай порядок. Первый — самый приоритетный. Можно создавать <b>ручные группы</b>.
+            </div>
+            <div class="actions" style="margin-bottom:14px;">
+                <button id="btn-add-group" class="btn primary">+ Создать группу</button>
+            </div>
+            <div id="groups" class="groups"></div>
+            <div class="actions">
+                <button id="btn-save-groups" class="btn primary">Сохранить приоритеты</button>
+                <span id="groups-status" class="status"></span>
+            </div>
+        </section>
+
+        <section class="tab-page" data-page="devices">
+            <div class="section-hint" style="margin-bottom:14px;">
+                Для конкретного устройства (по IP) можно назначить: весь трафик через прокси, напрямую, или заблокировать. <b>Правило устройства имеет приоритет над всеми списками.</b>
+            </div>
+            <div id="devices-list" class="custom-list"></div>
+            <div class="actions">
+                <button id="btn-add-device" class="btn">+ Добавить устройство</button>
+                <button id="btn-save-devices" class="btn primary">Сохранить устройства</button>
+                <span id="devices-status" class="status"></span>
+            </div>
+        </section>
+
+        <section class="tab-page" data-page="dns">
+            <div class="section-hint" style="margin-bottom:14px;">
+                Основной DNS — роутера (AdGuard Home). Резервный — через VPN. Чтобы <b>всё шло через роутер</b> — оставь <code>dns-router</code> включённым, а <code>dns-remote</code> выключенным.
+            </div>
+            <div id="dns-list" class="dns-list"></div>
+            <div class="actions">
+                <button id="btn-add-dns" class="btn">+ Добавить DNS</button>
+                <button id="btn-save-dns" class="btn primary">Сохранить DNS</button>
+                <span id="dns-status" class="status"></span>
+            </div>
+        </section>
+
+        <section class="tab-page" data-page="sync">
+            <div class="section-hint" style="margin-bottom:14px;">
+                Автообновление .srs-файлов из каталога.
+            </div>
+
+            <div class="settings-card">
+                <label class="settings-row">
+                    <input type="checkbox" id="sync-enabled">
+                    <div>
+                        <div class="settings-row-title">Автообновление списков</div>
+                        <div class="settings-row-desc">Скачивать свежие версии .srs по расписанию</div>
+                    </div>
+                </label>
+
+                <div class="settings-row">
+                    <div>
+                        <div class="settings-row-title">Интервал</div>
+                        <div class="settings-row-desc">Как часто обновлять</div>
+                    </div>
+                    <select id="sync-interval" class="sync-select">
+                        <option value="1">Каждый час</option>
+                        <option value="3">Каждые 3 часа</option>
+                        <option value="6">Каждые 6 часов</option>
+                        <option value="12">Каждые 12 часов</option>
+                        <option value="24">Каждый день</option>
+                    </select>
+                </div>
+
+                <div class="actions">
+                    <button id="btn-save-sync" class="btn primary">Сохранить</button>
+                    <button id="btn-sync-now" class="btn">Скачать сейчас</button>
+                    <span id="sync-status" class="status"></span>
+                </div>
+            </div>
+        </section>
+
+        <section class="tab-page" data-page="settings">
+            <div class="settings-card">
+                <h3>📜 Логирование</h3>
+                <label class="settings-row">
+                    <input type="checkbox" id="log-enabled">
+                    <div>
+                        <div class="settings-row-title">Записывать логи Sing-box</div>
+                        <div class="settings-row-desc">Логи хранятся <b>только в оперативке</b>, на диск не пишутся</div>
+                    </div>
+                </label>
+
+                <div class="settings-row">
+                    <div>
+                        <div class="settings-row-title">Размер буфера логов</div>
+                        <div class="settings-row-desc">Сколько последних строк держать в памяти</div>
+                    </div>
+                    <select id="log-ring-size" class="sync-select">
+                        <option value="500">500 строк</option>
+                        <option value="1000">1000 строк</option>
+                        <option value="2000">2000 строк</option>
+                        <option value="5000">5000 строк</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="settings-card">
+                <h3>⚡ Применение</h3>
+                <label class="settings-row">
+                    <input type="checkbox" id="restart-on-apply">
+                    <div>
+                        <div class="settings-row-title">Перезапускать Sing-box после «Применить»</div>
+                        <div class="settings-row-desc">Если выключено — конфиг обновится, но Sing-box не перезапустится</div>
+                    </div>
+                </label>
+            </div>
+
+            <div class="settings-card">
+                <h3>🔐 Смена пароля</h3>
+                <div class="section-hint" style="margin-bottom:12px;">
+                    Пароль защищает доступ к веб-интерфейсу. После смены нужно войти заново.
+                </div>
+                <div class="custom-field">
+                    <div class="custom-field-label">Текущий пароль</div>
+                    <input type="password" id="pw-old" placeholder="••••••••">
+                </div>
+                <div class="custom-field" style="margin-top:10px;">
+                    <div class="custom-field-label">Новый пароль</div>
+                    <input type="password" id="pw-new" placeholder="Минимум 4 символа">
+                </div>
+                <div class="custom-field" style="margin-top:10px;">
+                    <div class="custom-field-label">Повторите новый пароль</div>
+                    <input type="password" id="pw-new2" placeholder="Повтор">
+                </div>
+                <div class="actions" style="margin-top:14px;">
+                    <button id="btn-change-password" class="btn primary">Сменить пароль</button>
+                    <span id="pw-status" class="status"></span>
+                </div>
+            </div>
+
+            <div class="settings-card">
+                <h3>💾 Экспорт / Импорт</h3>
+                <div class="section-hint" style="margin-bottom:12px;">
+                    Экспортирует <code>state.json</code> целиком.
+                </div>
+                <div class="actions">
+                    <button id="btn-export" class="btn">📥 Скачать state.json</button>
+                    <label class="btn" style="cursor:pointer;">
+                        📤 Загрузить state.json
+                        <input type="file" id="file-import" accept=".json" style="display:none;">
+                    </label>
+                </div>
+            </div>
+
+            <div class="actions">
+                <button id="btn-save-settings" class="btn primary">Сохранить настройки</button>
+                <span id="settings-status" class="status"></span>
+            </div>
+        </section>
+
+        <section class="tab-page" data-page="monitor">
+            <div class="section-hint" style="margin-bottom:14px;">
+                Обновляется каждые 5 секунд.
+            </div>
+            <div id="monitor" class="monitor"></div>
+        </section>
+
+        <section class="tab-page" data-page="logs">
+            <div class="actions" style="margin-bottom:14px;">
+                <button id="btn-logs-auto" class="btn primary">⏸ Остановить автообновление</button>
+                <button id="btn-logs-clear" class="btn">Очистить</button>
+            </div>
+            <pre id="logs-content" class="logs">Журнал пуст.</pre>
+        </section>
+    </main>
+</div>
+
+<div id="modal-add" class="modal-overlay" style="display:none;">
+    <div class="modal">
+        <h3>Добавить сервер</h3>
+        <p class="modal-hint">Вставь ссылку <code>vless://</code>, <code>trojan://</code>, <code>hysteria2://</code> или <code>ss://</code>.</p>
+        <textarea id="modal-raw" rows="4" placeholder="vless://..."></textarea>
+        <div class="modal-actions">
+            <button id="modal-cancel" class="btn">Отмена</button>
+            <button id="modal-save" class="btn primary">Добавить</button>
+        </div>
+        <div id="modal-status" class="status"></div>
+    </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
