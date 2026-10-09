@@ -173,6 +173,7 @@ func (ringWriter) Write(p []byte) (int, error) {
 }
 
 // Restart — перезапуск Sing-box + настройка MARK/ip rule.
+// Перехватываем трафик из всех LAN и WG-интерфейсов.
 func Restart() error {
 	killOld()
 	if _, err := os.Stat(BinaryPath()); err != nil {
@@ -240,12 +241,20 @@ func Restart() error {
 
 	// Настраиваем iptables MARK + ip rule + ip route
 	if runtime.GOOS == "linux" {
-		lan := iptables.DetectLANInterface()
-		routerIP := iptables.DetectRouterIP(lan)
-		if err := iptables.Setup(lan, routerIP); err != nil {
+		ifaces := iptables.DetectLANInterfaces()
+		// Определяем IP роутера по первому LAN-интерфейсу
+		routerIP := "192.168.35.1"
+		for _, i := range ifaces {
+			if strings.HasPrefix(i, "br") {
+				routerIP = iptables.DetectRouterIP(i)
+				break
+			}
+		}
+		fmt.Printf("[singbox] интерфейсы для MARK: %v, IP роутера: %s\n", ifaces, routerIP)
+
+		if err := iptables.Setup(ifaces, routerIP); err != nil {
 			fmt.Printf("[singbox] предупреждение: iptables: %v\n", err)
 		} else {
-			// Устанавливаем NDMS hook (для Keenetic)
 			_ = iptables.WriteNDMSHook()
 		}
 	}
