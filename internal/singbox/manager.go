@@ -52,6 +52,44 @@ func InstallDir() string {
 func BinaryPath() string { return InstallDir() + "/sing-box" }
 func ConfigPath() string { return InstallDir() + "/config.json" }
 
+// LoaderPath — путь к динамическому загрузчику для Sing-box.
+// На Keenetic корень / read-only, а glibc лежит в /opt/lib.
+// Sing-box собран под glibc, поэтому без указания загрузчика падает с "no such file or directory".
+// НОВОЕ: ищем загрузчик по стандартным путям.
+func LoaderPath() string {
+	candidates := []string{
+		"/lib/ld-linux-aarch64.so.1",
+		"/opt/lib/ld-linux-aarch64.so.1",
+	}
+	for _, p := range candidates {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return ""
+}
+
+// singBoxArgs возвращает аргументы для запуска Sing-box.
+// Если доступен загрузчик и системного нет — оборачиваем команду через него.
+// НОВОЕ.
+func singBoxArgs(subcommand ...string) []string {
+	bin := BinaryPath()
+	loader := LoaderPath()
+
+	// Если системный загрузчик есть (стандартная Linux) — запускаем напрямую.
+	if _, err := os.Stat("/lib/ld-linux-aarch64.so.1"); err == nil {
+		return append([]string{bin}, subcommand...)
+	}
+
+	// Если системного нет, но есть в /opt/lib — запускаем через загрузчик.
+	if loader != "" {
+		return append([]string{loader, bin}, subcommand...)
+	}
+
+	// Fallback — напрямую (вдруг статически слинкован).
+	return append([]string{bin}, subcommand...)
+}
+
 func EnsureInstalled() error {
 	if _, err := os.Stat(BinaryPath()); err == nil {
 		fmt.Println("[singbox] уже установлен:", BinaryPath())
@@ -152,7 +190,6 @@ func extractTarGz(r io.Reader, destDir string) error {
 	return nil
 }
 
-// writer-обёртка, которая пишет в Ring только если логирование включено.
 type ringWriter struct{}
 
 func (ringWriter) Write(p []byte) (int, error) {
@@ -162,7 +199,8 @@ func (ringWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// Restart перезапускает sing-box. Логи — только в RAM.
+// Restart перезапускает sing-box с текущим конфигом.
+// НОВОЕ: если системного загрузчика нет, используем /opt/lib/ld-linux-aarch64.so.1.
 func Restart() error {
 	killOld()
 	if _, err := os.Stat(BinaryPath()); err != nil {
@@ -174,10 +212,10 @@ func Restart() error {
 
 	LogRing.Clear()
 
-	fmt.Println("[singbox] запускаем:", BinaryPath())
-	cmd := exec.Command(BinaryPath(), "run", "-c", ConfigPath())
+	args := singBoxArgs("run", "-c", ConfigPath())
+	fmt.Printf("[singbox] запускаем: %v\n", args)
 
-	// Пишем и stdout, и stderr в Ring (или выбрасываем)
+	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Stdout = ringWriter{}
 	cmd.Stderr = ringWriter{}
 
