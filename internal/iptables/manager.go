@@ -93,14 +93,14 @@ func Setup(vlessIPs []string) error {
 		return fmt.Errorf("apply mangle: %w", err)
 	}
 
+	// Init-скрипты (создаём ДО NDMS-хука — хук ссылается на S55singbox-tproxy.sh)
+	if err := WriteInitScripts(); err != nil {
+		fmt.Printf("[iptables] предупреждение: init scripts: %v\n", err)
+	}
+
 	// NDMS-хук
 	if err := WriteNDMSHook(); err != nil {
 		fmt.Printf("[iptables] предупреждение: NDMS hook: %v\n", err)
-	}
-
-	// Init-скрипты
-	if err := WriteInitScripts(); err != nil {
-		fmt.Printf("[iptables] предупреждение: init scripts: %v\n", err)
 	}
 
 	fmt.Println("[iptables] правила TProxy+REDIRECT установлены")
@@ -141,13 +141,34 @@ func Cleanup() error {
 func WriteNDMSHook() error {
 	script := `#!/bin/sh
 # NDMS hook: восстанавливает правила Sing-box после перестройки netfilter Keenetic.
+#
+# KeeneticOS вызывает этот скрипт с аргументами:
+#   $1 = iptables | ip6tables
+#   $2 = nat | mangle | filter
+#
+# Мы работаем только для iptables + nat/mangle.
 
+type="$1"
+table="$2"
+
+# Только iptables
+[ "$type" != "iptables" ] && exit 0
+
+# Только nat и mangle
+[ "$table" != "nat" ] && [ "$table" != "mangle" ] && exit 0
+
+# Sing-box должен быть запущен
 ps -w | grep -v grep | grep -q "sing-box" || exit 0
 
-[ -x ` + iptablesNatPath + ` ] && ` + iptablesNatPath + `
-[ -x ` + iptablesManglePath + ` ] && ` + iptablesManglePath + `
+# Небольшая задержка — даём NDM закончить перестройку
+sleep 1
 
-logger -t singbox-ndm "netfilter rules restored"
+# Делегируем работу init-скрипту (он всегда на месте и идемпотентен)
+if [ -x /opt/etc/init.d/S55singbox-tproxy.sh ]; then
+    /opt/etc/init.d/S55singbox-tproxy.sh restart >/dev/null 2>&1
+fi
+
+logger -t singbox-ndm "netfilter rules restored (type=$type table=$table)"
 `
 	if err := os.MkdirAll("/opt/etc/ndm/netfilter.d", 0755); err != nil {
 		return err
