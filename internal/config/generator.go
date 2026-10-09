@@ -78,7 +78,6 @@ func Generate(
 
 	var rules []RouteRule
 
-	// 1. Устройства
 	for _, dr := range BuildDeviceRules(devices) {
 		ipcidr, _ := dr["ip_cidr"].([]string)
 		outbound, _ := dr["outbound"].(string)
@@ -88,7 +87,6 @@ func Generate(
 		})
 	}
 
-	// 2. Каталог
 	for _, tag := range ruleTags {
 		rules = append(rules, RouteRule{
 			RuleSet:  []string{tag},
@@ -96,7 +94,6 @@ func Generate(
 		})
 	}
 
-	// 3. Свои правила
 	for _, tag := range customTags {
 		r := findCustomRule(customRules, tag)
 		outbound := resolveTargetGroup(groups, tag)
@@ -109,7 +106,6 @@ func Generate(
 		})
 	}
 
-	// 4. Свои .srs
 	for _, tag := range srsTags {
 		s := findCustomSRS(customSRS, tag)
 		outbound := resolveTargetGroup(groups, tag)
@@ -147,7 +143,6 @@ func Generate(
 			RuleSet: ruleSets,
 			Rules:   rules,
 			Final:   finalOutbound,
-			// auto_detect_interface предотвращает петлю трафика при auto_route
 			AutoDetectInterface: true,
 			DefaultDomainResolver: map[string]interface{}{
 				"server": dnsCfg.DefaultServer,
@@ -404,21 +399,17 @@ func buildTransport(p subscription.Proxy) map[string]interface{} {
 	return nil
 }
 
-// buildInbounds — TUN с новым форматом адресов (sing-box 1.12+).
-//   address вместо inet4_address — старый формат удалён
-//   auto_redirect — на Linux лучше auto_route
-//   stack: system — меньше памяти
+// buildInbounds — TUN без auto_redirect (на Keenetic нет nftables).
+// Трафик заворачивается через auto_route.
 func buildInbounds() []map[string]interface{} {
 	return []map[string]interface{}{
 		{
 			"type":           "tun",
 			"tag":            "tun-in",
 			"interface_name": "singtun0",
-			// Новый формат: address — массив CIDR
 			"address":        []string{"172.19.0.1/30"},
 			"mtu":            1500,
 			"auto_route":     true,
-			"auto_redirect":  true,
 			"strict_route":   false,
 			"stack":          "system",
 		},
