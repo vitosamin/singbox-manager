@@ -1,0 +1,82 @@
+#!/bin/sh
+# Init-скрипт для Sing-box Manager на Keenetic (Entware).
+# Положить в /opt/etc/init.d/S99singbox-manager
+
+BIN=/opt/bin/singbox-manager
+PIDFILE=/opt/var/run/singbox-manager.pid
+LOGFILE=/opt/var/log/singbox-manager.log
+ADDR=":9091"
+
+is_running() {
+    if [ -f "$PIDFILE" ]; then
+        PID=$(cat "$PIDFILE")
+        if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+            return 0
+        fi
+    fi
+    return 1
+}
+
+start() {
+    if is_running; then
+        echo "singbox-manager уже запущен (PID $(cat $PIDFILE))"
+        return 0
+    fi
+    echo "Запуск singbox-manager..."
+    mkdir -p /opt/var/run /opt/var/log
+    nohup $BIN -addr $ADDR > $LOGFILE 2>&1 &
+    echo $! > $PIDFILE
+    sleep 1
+    if is_running; then
+        echo "OK, PID $(cat $PIDFILE)"
+        return 0
+    fi
+    echo "ОШИБКА: не удалось запустить"
+    return 1
+}
+
+stop() {
+    if ! is_running; then
+        echo "singbox-manager не запущен"
+        return 0
+    fi
+    PID=$(cat $PIDFILE)
+    echo "Остановка singbox-manager (PID $PID)..."
+    kill "$PID" 2>/dev/null
+    sleep 1
+    if is_running; then
+        kill -9 "$PID" 2>/dev/null
+    fi
+    rm -f "$PIDFILE"
+    # Остановить Sing-box тоже
+    killall sing-box 2>/dev/null
+    echo "OK"
+}
+
+restart() {
+    stop
+    sleep 1
+    start
+}
+
+status() {
+    if is_running; then
+        echo "singbox-manager работает (PID $(cat $PIDFILE))"
+        return 0
+    fi
+    echo "singbox-manager не запущен"
+    return 1
+}
+
+case "$1" in
+    start)   start ;;
+    stop)    stop ;;
+    restart) restart ;;
+    status)  status ;;
+    *)
+        echo "Использование: $0 {start|stop|restart|status}"
+        exit 1
+        ;;
+esac
+
+exit 0
