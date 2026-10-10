@@ -79,29 +79,35 @@ mv singbox-manager.new "$MANAGER_BIN_PATH"
 chmod +x "$MANAGER_BIN_PATH"
 echo "    OK: $MANAGER_BIN_PATH"
 
-# --- Скачивание бинарника Sing-box (AWG-сборка) ---
+# --- Скачивание бинарника Sing-box (официальный 1.14.2) ---
 if [ ! -f "$SINGBOX_BIN_PATH" ]; then
     echo ""
-    echo "==> Скачиваем Sing-box (AWG-сборка, поддерживает XTLS-Vision)"
-    SINGBOX_URL="https://github.com/$REPO/releases/download/sing-box-v1.15.0-awgm.31/singbox-1.15.0-alpha.10-awgm.31-aarch64-3.10"
+    echo "==> Скачиваем Sing-box 1.14.2 (официальный, SagerNet)"
+    SINGBOX_URL="https://github.com/SagerNet/sing-box/releases/download/v1.14.2/sing-box-1.14.2-linux-arm64.tar.gz"
 
     if command -v curl >/dev/null 2>&1; then
-        curl -L -o sing-box.new "$SINGBOX_URL"
+        curl -L -o sing-box.tar.gz "$SINGBOX_URL"
     elif command -v wget >/dev/null 2>&1; then
-        wget -O sing-box.new "$SINGBOX_URL"
+        wget -O sing-box.tar.gz "$SINGBOX_URL"
     else
         echo "ОШИБКА: нет ни curl, ни wget"
         exit 1
     fi
 
-    if [ ! -f sing-box.new ]; then
+    if [ ! -f sing-box.tar.gz ]; then
         echo "ОШИБКА: не удалось скачать Sing-box"
         exit 1
     fi
 
-    chmod +x sing-box.new
-    mv sing-box.new "$SINGBOX_BIN_PATH"
+    # Распаковываем
+    tar xzf sing-box.tar.gz
+    cp sing-box-1.14.2-linux-arm64/sing-box "$SINGBOX_BIN_PATH"
+    cp sing-box-1.14.2-linux-arm64/libcronet.so "$DATA_DIR/" 2>/dev/null || true
     chmod +x "$SINGBOX_BIN_PATH"
+
+    # Чистим
+    rm -rf sing-box.tar.gz sing-box-1.14.2-linux-arm64
+
     echo "    OK: $SINGBOX_BIN_PATH"
 else
     echo ""

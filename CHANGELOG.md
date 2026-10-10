@@ -1,5 +1,49 @@
 # Changelog
 
+## [3.1.0] — 2026-10-10
+
+**MINOR:** переход на официальный Sing-box 1.14.2. Оба Reality работают.
+
+### Изменено
+- **AWG-сборка → официальный Sing-box 1.14.2** (SagerNet).
+  AWG-бинарник давал segfault на ядре 4.9.
+- **`install.sh`** — скачивает `.tar.gz` из SagerNet, распаковывает.
+- **`buildDefaults()`** — всегда использует `dns-bootstrap`, игнорирует
+  старое значение `dnsCfg.DefaultServer` из state.json.
+
+### Исправлено
+- **Ошибка `default domain resolver not found: dns-router`** —
+  в `99-defaults.json` подставлялся старый тег из state.json.
+
+### Проверено
+- **2 Reality-сервера работают одновременно** (flow: xtls-rprx-vision).
+- Clash API отвечает, delay 100-130 мс на оба сервера.
+- Прокси `Proxy10`, `Proxy11` создаются в Keenetic через `ndmc`.
+
+## [3.0.0] — 2026-10-10
+
+## [3.1.0] — 2026-10-10
+
+**MINOR:** переход на официальный Sing-box 1.14.2. Оба Reality работают.
+
+### Изменено
+- **AWG-сборка → официальный Sing-box 1.14.2** (SagerNet).
+  AWG-бинарник давал segfault на ядре 4.9.
+- **`install.sh`** — скачивает `.tar.gz` из SagerNet, распаковывает.
+- **`buildDefaults()`** — всегда использует `dns-bootstrap`, игнорирует
+  старое значение `dnsCfg.DefaultServer` из state.json.
+
+### Исправлено
+- **Ошибка `default domain resolver not found: dns-router`** —
+  в `99-defaults.json` подставлялся старый тег из state.json.
+
+### Проверено
+- **2 Reality-сервера работают одновременно** (flow: xtls-rprx-vision).
+- Clash API отвечает, delay 100-130 мс на оба сервера.
+- Прокси `Proxy10`, `Proxy11` создаются в Keenetic через `ndmc`.
+
+## [3.0.0] — 2026-10-10
+
 ## [3.0.0] — 2026-10-10
 
 **MAJOR:** переход на Keenetic native proxy через `ndmc`. Убран iptables.

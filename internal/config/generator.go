@@ -173,10 +173,11 @@ func buildDNSRewrites() map[string]interface{} {
 
 // buildDefaults — стратегия, resolver.
 func buildDefaults(dnsCfg DNSConfig) map[string]interface{} {
-	defaultResolver := dnsCfg.DefaultServer
-	if defaultResolver == "" {
-		defaultResolver = "dns-bootstrap"
-	}
+	// ВАЖНО: всегда используем "dns-bootstrap" — он гарантированно есть
+	// в config.d. dnsCfg.DefaultServer из state.json может содержать старые
+	// теги (dns-router, dns-remote), которые в v3.0.0 больше не создаются.
+	_ = dnsCfg
+	defaultResolver := "dns-bootstrap"
 	return map[string]interface{}{
 		"dns": map[string]interface{}{
 			"servers": []map[string]interface{}{
