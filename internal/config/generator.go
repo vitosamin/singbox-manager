@@ -4,61 +4,213 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/shapovalenko/keenetic-singbox-manager/internal/ruleset"
 	"github.com/shapovalenko/keenetic-singbox-manager/internal/subscription"
 )
 
-type RuleSet struct {
-	Type   string                   `json:"type"`
-	Tag    string                   `json:"tag"`
-	Format string                   `json:"format,omitempty"`
-	Path   string                   `json:"path,omitempty"`
-	Rules  []map[string]interface{} `json:"rules,omitempty"`
+// BasePort — базовый порт первого mixed-inbound. Каждый сервер = 1080, 1081, ...
+const BasePort = 1080
+
+// ConfigDir — каталог с фрагментами конфига для `sing-box -C`.
+const ConfigDirName = "config.d"
+
+// ConfigDir возвращает абсолютный путь к каталогу config.d.
+func ConfigDir(installDir string) string {
+	return filepath.Join(installDir, ConfigDirName)
 }
 
-type RouteRule struct {
-	RuleSet     []string `json:"rule_set,omitempty"`
-	Outbound    string   `json:"outbound,omitempty"`
-	IPCIDR      []string `json:"ip_cidr,omitempty"`
-	IPIsPrivate bool     `json:"ip_is_private,omitempty"`
-	Network     string   `json:"network,omitempty"`
-}
-
-type Route struct {
-	RuleSet               []RuleSet              `json:"rule_set,omitempty"`
-	Rules                 []RouteRule            `json:"rules,omitempty"`
-	Final                 string                 `json:"final"`
-	DefaultDomainResolver map[string]interface{} `json:"default_domain_resolver,omitempty"`
-}
-
-type Experimental struct {
-	ClashAPI ClashAPI `json:"clash_api"`
-}
-
-type ClashAPI struct {
-	ExternalController string `json:"external_controller"`
-	Secret             string `json:"secret,omitempty"`
-}
-
-type Config struct {
-	Log          map[string]interface{}   `json:"log,omitempty"`
-	DNS          map[string]interface{}   `json:"dns,omitempty"`
-	Inbounds     []map[string]interface{} `json:"inbounds,omitempty"`
-	Outbounds    []map[string]interface{} `json:"outbounds,omitempty"`
-	Route        Route                    `json:"route,omitempty"`
-	Experimental Experimental             `json:"experimental,omitempty"`
-}
-
-const ClashAPIPort = 9090
-
-func resolveTargetGroup(groups GroupConfig, tag string) string {
-	if g, ok := groups[tag]; ok && len(g.PriorityTags()) > 0 {
-		return "proxy-" + tag
+// GenerateV3 — новая генерация: создаёт config.d/ с фрагментами.
+// Каждый сервер получает свой mixed-inbound на BasePort+i.
+// Route rule: inbound "proxy-N-in" → outbound "proxy-N".
+func GenerateV3(
+	enabledIDs []string,
+	customRules []ruleset.CustomRule,
+	customSRS []ruleset.CustomSRS,
+	proxies []subscription.Proxy,
+	groups GroupConfig,
+	dnsCfg DNSConfig,
+	devices []DeviceRule,
+	installDir string,
+) error {
+	if len(proxies) == 0 {
+		return fmt.Errorf("нет серверов для генерации конфига")
 	}
-	return "proxy-default"
+
+	cfgDir := ConfigDir(installDir)
+	// Чистим старый config.d/
+	if err := os.RemoveAll(cfgDir); err != nil {
+		return fmt.Errorf("remove config.d: %w", err)
+	}
+	if err := os.MkdirAll(cfgDir, 0755); err != nil {
+		return fmt.Errorf("mkdir config.d: %w", err)
+	}
+
+	// 00-base.json — log, clash_api, direct
+	if err := writeJSONFile(filepath.Join(cfgDir, "00-base.json"), buildBase()); err != nil {
+		return fmt.Errorf("00-base: %w", err)
+	}
+
+	// 10-tunnels.json — N mixed-inbound + N VLESS-outbound + route rules
+	tunnels, err := buildTunnels(proxies)
+	if err != nil {
+		return fmt.Errorf("10-tunnels: %w", err)
+	}
+	if err := writeJSONFile(filepath.Join(cfgDir, "10-tunnels.json"), tunnels); err != nil {
+		return fmt.Errorf("10-tunnels: %w", err)
+	}
+
+	// 17-dns-rewrites.json — DNS-перехват для Keenetic-доменов
+	if err := writeJSONFile(filepath.Join(cfgDir, "17-dns-rewrites.json"), buildDNSRewrites()); err != nil {
+		return fmt.Errorf("17-dns-rewrites: %w", err)
+	}
+
+	// 99-defaults.json — стратегия и resolver
+	if err := writeJSONFile(filepath.Join(cfgDir, "99-defaults.json"), buildDefaults(dnsCfg)); err != nil {
+		return fmt.Errorf("99-defaults: %w", err)
+	}
+
+	fmt.Printf("[config] записан %s\n", cfgDir)
+	fmt.Printf("  серверов: %d, inbound-портов: %d-%d\n",
+		len(proxies), BasePort, BasePort+len(proxies)-1)
+	return nil
 }
 
+// buildBase — базовые настройки.
+func buildBase() map[string]interface{} {
+	return map[string]interface{}{
+		"log": map[string]interface{}{
+			"level":     "info",
+			"timestamp": true,
+		},
+		"experimental": map[string]interface{}{
+			"clash_api": map[string]interface{}{
+				"external_controller": "127.0.0.1:9090",
+			},
+			"cache_file": map[string]interface{}{
+				"enabled": true,
+				"path":    "/opt/etc/sing-box/cache.db",
+			},
+		},
+		"outbounds": []map[string]interface{}{
+			{"type": "direct", "tag": "direct"},
+			{"type": "block", "tag": "block"},
+		},
+	}
+}
+
+// buildTunnels — N mixed-inbound + N VLESS + route rules.
+func buildTunnels(proxies []subscription.Proxy) (map[string]interface{}, error) {
+	inbounds := make([]map[string]interface{}, 0, len(proxies))
+	outbounds := make([]map[string]interface{}, 0, len(proxies))
+	rules := make([]map[string]interface{}, 0, len(proxies))
+
+	for i, p := range proxies {
+		port := BasePort + i
+		inTag := fmt.Sprintf("proxy-%d-in", i+1)
+		outTag := p.Tag
+
+		// inbound
+		inbounds = append(inbounds, map[string]interface{}{
+			"type":        "mixed",
+			"tag":         inTag,
+			"listen":      "127.0.0.1",
+			"listen_port": port,
+		})
+
+		// outbound
+		ob := proxyToOutbound(p)
+		if ob == nil {
+			return nil, fmt.Errorf("неподдерживаемый протокол: %s", p.Protocol)
+		}
+		// Принудительно перезаписываем tag на p.Tag
+		ob["tag"] = outTag
+		outbounds = append(outbounds, ob)
+
+		// route rule: inbound → outbound
+		rules = append(rules, map[string]interface{}{
+			"inbound":  []string{inTag},
+			"outbound": outTag,
+		})
+	}
+
+	return map[string]interface{}{
+		"inbounds":  inbounds,
+		"outbounds": outbounds,
+		"route": map[string]interface{}{
+			"rules": rules,
+			"final": "direct",
+		},
+	}, nil
+}
+
+// buildDNSRewrites — DNS-перехват для Keenetic-доменов.
+func buildDNSRewrites() map[string]interface{} {
+	return map[string]interface{}{
+		"dns": map[string]interface{}{
+			"servers": []map[string]interface{}{
+				{
+					"type":   "udp",
+					"tag":    "keendns-router",
+					"server": "127.0.0.1",
+				},
+			},
+			"rules": []map[string]interface{}{
+				{
+					"domain": []string{"my.keenetic.net", "my.netcraze.net"},
+					"domain_suffix": []string{
+						"keenetic.pro", "keenetic.link", "keenetic.name",
+						"keenetic.io", "netcraze.pro", "netcraze.net",
+						"netcraze.io", "crazedns.ru",
+					},
+					"server": "keendns-router",
+				},
+			},
+		},
+	}
+}
+
+// buildDefaults — стратегия, resolver.
+func buildDefaults(dnsCfg DNSConfig) map[string]interface{} {
+	defaultResolver := dnsCfg.DefaultServer
+	if defaultResolver == "" {
+		defaultResolver = "dns-bootstrap"
+	}
+	return map[string]interface{}{
+		"dns": map[string]interface{}{
+			"servers": []map[string]interface{}{
+				{
+					"type":   "udp",
+					"tag":    "dns-bootstrap",
+					"server": "1.1.1.1",
+				},
+			},
+			"optimistic": true,
+			"strategy":   "prefer_ipv4",
+		},
+		"route": map[string]interface{}{
+			"default_domain_resolver": map[string]interface{}{
+				"server": defaultResolver,
+			},
+		},
+	}
+}
+
+// writeJSONFile — записывает JSON-файл с отступами.
+func writeJSONFile(path string, v interface{}) error {
+	data, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0644)
+}
+
+// -------------------- старые функции (для совместимости) --------------------
+
+// Generate — старый API, оставлен для совместимости с handleApply v2.
+// В v3.0.0 handleApply вызывает GenerateV3.
+// Если installDir передан как путь к файлу — конвертируем.
 func Generate(
 	enabledIDs []string,
 	customRules []ruleset.CustomRule,
@@ -69,230 +221,17 @@ func Generate(
 	devices []DeviceRule,
 	outPath string,
 ) error {
-	ruleSets, ruleTags := buildRuleSets(enabledIDs)
-	customSets, customTags := buildCustomRuleSets(customRules)
-	srsSets, srsTags := buildCustomSRSSets(customSRS)
-	ruleSets = append(ruleSets, customSets...)
-	ruleSets = append(ruleSets, srsSets...)
-
-	outbounds := buildOutbounds(proxies, groups)
-
-	var rules []RouteRule
-
-	for _, dr := range BuildDeviceRules(devices) {
-		ipcidr, _ := dr["ip_cidr"].([]string)
-		outbound, _ := dr["outbound"].(string)
-		rules = append(rules, RouteRule{
-			IPCIDR:   ipcidr,
-			Outbound: outbound,
-		})
-	}
-
-	rules = append(rules, RouteRule{
-		IPIsPrivate: true,
-		Outbound:    "direct",
-	})
-
-	for _, tag := range ruleTags {
-		rules = append(rules, RouteRule{
-			RuleSet:  []string{tag},
-			Outbound: resolveTargetGroup(groups, tag),
-		})
-	}
-
-	for _, tag := range customTags {
-		r := findCustomRule(customRules, tag)
-		outbound := resolveTargetGroup(groups, tag)
-		if r != nil && r.Outbound != "" {
-			outbound = r.Outbound
-		}
-		rules = append(rules, RouteRule{
-			RuleSet:  []string{tag},
-			Outbound: outbound,
-		})
-	}
-
-	for _, tag := range srsTags {
-		s := findCustomSRS(customSRS, tag)
-		outbound := resolveTargetGroup(groups, tag)
-		if s != nil && s.Outbound != "" {
-			outbound = s.Outbound
-		}
-		rules = append(rules, RouteRule{
-			RuleSet:  []string{tag},
-			Outbound: outbound,
-		})
-	}
-
-	finalOutbound := "direct"
-	if g, ok := groups["default"]; ok && len(g.PriorityTags()) > 0 {
-		finalOutbound = "proxy-default"
-	}
-
-	if err := dnsCfg.Validate(); err != nil {
-		return fmt.Errorf("dns config: %w", err)
-	}
-
-	proxyDetour := ""
-	if g, ok := groups["default"]; ok && len(g.PriorityTags()) > 0 {
-		proxyDetour = "proxy-default"
-	}
-
-	dnsSection := dnsCfg.BuildDNS(proxyDetour)
-
-	cfg := Config{
-		Log:       map[string]interface{}{"level": "info", "timestamp": true},
-		DNS:       dnsSection,
-		Inbounds:  buildInbounds(),
-		Outbounds: outbounds,
-		Route: Route{
-			RuleSet: ruleSets,
-			Rules:   rules,
-			Final:   finalOutbound,
-			DefaultDomainResolver: map[string]interface{}{
-				"server": dnsCfg.DefaultServer,
-			},
-		},
-		Experimental: Experimental{
-			ClashAPI: ClashAPI{
-				ExternalController: fmt.Sprintf("127.0.0.1:%d", ClashAPIPort),
-			},
-		},
-	}
-
-	data, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal: %w", err)
-	}
-
-	if err := os.WriteFile(outPath, data, 0644); err != nil {
-		return fmt.Errorf("write %s: %w", outPath, err)
-	}
-
-	fmt.Printf("[config] записан %s\n", outPath)
-	fmt.Printf("  списков: %d предуст + %d custom + %d srs\n", len(enabledIDs), len(customRules), len(customSRS))
-	fmt.Printf("  устройств: %d, outbounds: %d, групп: %d\n", len(devices), len(outbounds), len(groups))
-	return nil
-}
-
-func findCustomRule(rules []ruleset.CustomRule, id string) *ruleset.CustomRule {
-	for i := range rules {
-		if rules[i].ID == id {
-			return &rules[i]
-		}
-	}
-	return nil
-}
-
-func findCustomSRS(items []ruleset.CustomSRS, id string) *ruleset.CustomSRS {
-	for i := range items {
-		if items[i].ID == id {
-			return &items[i]
-		}
-	}
-	return nil
-}
-
-func buildRuleSets(ids []string) ([]RuleSet, []string) {
-	var ruleSets []RuleSet
-	var tags []string
-	for _, id := range ids {
-		item, ok := ruleset.FindByID(id)
-		if !ok {
-			continue
-		}
-		ruleSets = append(ruleSets, RuleSet{
-			Type: "local", Tag: item.ID, Format: "binary",
-			Path: ruleset.RulesetDir() + "/" + item.ID + ".srs",
-		})
-		tags = append(tags, item.ID)
-	}
-	return ruleSets, tags
-}
-
-func buildCustomRuleSets(rules []ruleset.CustomRule) ([]RuleSet, []string) {
-	var ruleSets []RuleSet
-	var tags []string
-	for _, r := range rules {
-		if len(r.Domains) == 0 && len(r.IPCIDRs) == 0 {
-			continue
-		}
-		if !r.Enabled {
-			continue
-		}
-		var inlineRules []map[string]interface{}
-		if len(r.Domains) > 0 {
-			inlineRules = append(inlineRules, map[string]interface{}{"domain_suffix": r.Domains})
-		}
-		if len(r.IPCIDRs) > 0 {
-			inlineRules = append(inlineRules, map[string]interface{}{"ip_cidr": r.IPCIDRs})
-		}
-		ruleSets = append(ruleSets, RuleSet{Type: "inline", Tag: r.ID, Rules: inlineRules})
-		tags = append(tags, r.ID)
-	}
-	return ruleSets, tags
-}
-
-func buildCustomSRSSets(items []ruleset.CustomSRS) ([]RuleSet, []string) {
-	var ruleSets []RuleSet
-	var tags []string
-	for _, s := range items {
-		if !s.Enabled {
-			continue
-		}
-		ruleSets = append(ruleSets, RuleSet{
-			Type: "local", Tag: s.ID, Format: "binary",
-			Path: ruleset.RulesetDir() + "/" + s.ID + ".srs",
-		})
-		tags = append(tags, s.ID)
-	}
-	return ruleSets, tags
-}
-
-func buildOutbounds(proxies []subscription.Proxy, groups GroupConfig) []map[string]interface{} {
-	proxyMap := make(map[string]subscription.Proxy)
-	for _, p := range proxies {
-		proxyMap[p.Tag] = p
-	}
-	var outbounds []map[string]interface{}
-	for groupName, g := range groups {
-		tags := g.PriorityTags()
-		var validTags []string
-		for _, t := range tags {
-			if _, ok := proxyMap[t]; ok {
-				validTags = append(validTags, t)
-			}
-		}
-		if len(validTags) == 0 {
-			continue
-		}
-		outbounds = append(outbounds, map[string]interface{}{
-			"type": "selector", "tag": "proxy-" + groupName,
-			"outbounds": validTags, "default": validTags[0],
-		})
-	}
-	if len(groups) == 0 && len(proxies) > 0 {
-		var allTags []string
-		for _, p := range proxies {
-			allTags = append(allTags, p.Tag)
-		}
-		outbounds = append(outbounds, map[string]interface{}{
-			"type": "selector", "tag": "proxy-default",
-			"outbounds": allTags, "default": allTags[0],
-		})
-	}
-	for _, p := range proxies {
-		ob := proxyToOutbound(p)
-		if ob != nil {
-			outbounds = append(outbounds, ob)
-		}
-	}
-	outbounds = append(outbounds,
-		map[string]interface{}{"type": "direct", "tag": "direct"},
-		map[string]interface{}{"type": "block", "tag": "block"},
+	// outPath в v2 = /opt/etc/sing-box/config.json
+	// installDir в v3 = /opt/etc/sing-box
+	installDir := filepath.Dir(outPath)
+	return GenerateV3(
+		enabledIDs, customRules, customSRS,
+		proxies, groups, dnsCfg, devices,
+		installDir,
 	)
-	return outbounds
 }
+
+// -------------------- outbound-хелперы --------------------
 
 func proxyToOutbound(p subscription.Proxy) map[string]interface{} {
 	switch p.Protocol {
@@ -336,6 +275,10 @@ func vlessOutbound(p subscription.Proxy) map[string]interface{} {
 			tls["reality"] = reality
 		}
 		ob["tls"] = tls
+	}
+	// flow (XTLS-Vision) — если есть в ссылке, передаём
+	if p.Flow != "" {
+		ob["flow"] = p.Flow
 	}
 	if t := buildTransport(p); t != nil {
 		ob["transport"] = t
@@ -399,28 +342,4 @@ func buildTransport(p subscription.Proxy) map[string]interface{} {
 		return g
 	}
 	return nil
-}
-
-func buildInbounds() []map[string]interface{} {
-	return []map[string]interface{}{
-		{
-			"type":        "mixed",
-			"tag":         "mixed-in",
-			"listen":      "127.0.0.1",
-			"listen_port": 1080,
-		},
-		{
-			"type":        "tproxy",
-			"tag":         "tproxy-in",
-			"listen":      "0.0.0.0",
-			"listen_port": 1081,
-			"network":     []string{"tcp", "udp"},
-		},
-		{
-			"type":        "redirect",
-			"tag":         "redirect-in",
-			"listen":      "0.0.0.0",
-			"listen_port": 1082,
-		},
-	}
 }

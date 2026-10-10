@@ -1,11 +1,7 @@
 package singbox
 
 import (
-	"archive/tar"
-	"compress/gzip"
 	"fmt"
-	"io"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -15,12 +11,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/shapovalenko/keenetic-singbox-manager/internal/iptables"
 	"github.com/shapovalenko/keenetic-singbox-manager/internal/logger"
 )
 
 const (
-	Version           = "1.14.0"
+	// Version — версия бинарника Sing-box (AWG-сборка).
+	Version           = "1.15.0-alpha.10-awgm.31"
 	DefaultInstallDir = "/opt/etc/sing-box"
 )
 
@@ -41,9 +37,13 @@ func InstallDir() string {
 	return DefaultInstallDir
 }
 
+// BinaryPath — путь к бинарнику Sing-box.
 func BinaryPath() string { return InstallDir() + "/sing-box" }
-func ConfigPath() string { return InstallDir() + "/config.json" }
 
+// ConfigDir — путь к каталогу config.d (для `-C`).
+func ConfigDir() string { return InstallDir() + "/config.d" }
+
+// LoaderPath — путь к glibc-загрузчику для Keenetic.
 func LoaderPath() string {
 	for _, p := range []string{"/lib/ld-linux-aarch64.so.1", "/opt/lib/ld-linux-aarch64.so.1"} {
 		if _, err := os.Stat(p); err == nil {
@@ -53,6 +53,7 @@ func LoaderPath() string {
 	return ""
 }
 
+// singBoxArgs — собираем команду запуска с учётом загрузчика.
 func singBoxArgs(subcommand ...string) []string {
 	bin := BinaryPath()
 	if _, err := os.Stat("/lib/ld-linux-aarch64.so.1"); err == nil {
@@ -64,65 +65,33 @@ func singBoxArgs(subcommand ...string) []string {
 	return append([]string{bin}, subcommand...)
 }
 
-// ResolveServerIPs — превращает домены VLESS-серверов в IP-адреса.
-// Нужно для исключения из iptables (иначе петля: сервер → proxy → сервер).
-func ResolveServerIPs(servers []string) []string {
-	var result []string
-	seen := make(map[string]bool)
-
-	for _, s := range servers {
-		if s == "" {
-			continue
-		}
-
-		if net.ParseIP(s) != nil {
-			if !seen[s] {
-				result = append(result, s)
-				seen[s] = true
-			}
-			continue
-		}
-
-		ips, err := net.LookupHost(s)
-		if err != nil {
-			fmt.Printf("[singbox] предупреждение: не могу отрезолвить %s: %v\n", s, err)
-			continue
-		}
-		for _, ip := range ips {
-			if !seen[ip] {
-				result = append(result, ip)
-				seen[ip] = true
-			}
-		}
-	}
-	return result
-}
-
+// EnsureInstalled — проверяет, что бинарник Sing-box установлен.
+// В v3.0.0 бинарник скачивается отдельно (из нашего GitHub Release).
+// Здесь — только проверка.
 func EnsureInstalled() error {
 	if _, err := os.Stat(BinaryPath()); err == nil {
-		fmt.Println("[singbox] уже установлен:", BinaryPath())
+		fmt.Println("[singbox] бинарник найден:", BinaryPath())
 		return nil
 	}
-	arch := "arm64"
-	if runtime.GOARCH == "mips" || runtime.GOARCH == "mipsle" {
-		arch = "mipsle"
-	}
+	// Если нет — пытаемся скачать из нашего релиза
+	return downloadFromRelease()
+}
+
+// downloadFromRelease — скачивает бинарник AWG-сборки из нашего GitHub Release.
+func downloadFromRelease() error {
 	url := fmt.Sprintf(
-		"https://github.com/SagerNet/sing-box/releases/download/v%s/sing-box-%s-linux-%s.tar.gz",
-		Version, Version, arch,
+		"https://github.com/vitosamin/singbox-manager/releases/download/sing-box-v%s/singbox-%s-aarch64-3.10",
+		Version, Version,
 	)
-	fmt.Printf("[singbox] скачиваем для linux/%s: %s\n", arch, url)
+	fmt.Printf("[singbox] скачиваем: %s\n", url)
+
 	if err := os.MkdirAll(InstallDir(), 0755); err != nil {
 		return fmt.Errorf("mkdir %s: %w", InstallDir(), err)
 	}
-	tmpFile, err := os.CreateTemp("", "sing-box-*.tar.gz")
-	if err != nil {
-		return fmt.Errorf("CreateTemp: %w", err)
-	}
-	defer os.Remove(tmpFile.Name())
-	defer tmpFile.Close()
 
-	resp, err := http.Get(url)
+	tmpPath := InstallDir() + "/sing-box.new"
+	client := &http.Client{Timeout: 5 * time.Minute}
+	resp, err := client.Get(url)
 	if err != nil {
 		return fmt.Errorf("http.Get: %w", err)
 	}
@@ -130,71 +99,26 @@ func EnsureInstalled() error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, url)
 	}
-	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
-		return fmt.Errorf("io.Copy: %w", err)
+
+	out, err := os.Create(tmpPath)
+	if err != nil {
+		return fmt.Errorf("create %s: %w", tmpPath, err)
 	}
-	if _, err := tmpFile.Seek(0, io.SeekStart); err != nil {
-		return fmt.Errorf("Seek: %w", err)
+	if _, err := out.ReadFrom(resp.Body); err != nil {
+		out.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("download: %w", err)
 	}
-	if err := extractTarGz(tmpFile, InstallDir()); err != nil {
-		return fmt.Errorf("extractTarGz: %w", err)
-	}
-	if _, err := os.Stat(BinaryPath()); err != nil {
-		return fmt.Errorf("бинарник не появился: %w", err)
-	}
-	if err := os.Chmod(BinaryPath(), 0755); err != nil {
+	out.Close()
+
+	if err := os.Chmod(tmpPath, 0755); err != nil {
 		return fmt.Errorf("chmod: %w", err)
 	}
-	fmt.Println("[singbox] установлен:", BinaryPath())
-	return nil
-}
+	if err := os.Rename(tmpPath, BinaryPath()); err != nil {
+		return fmt.Errorf("rename: %w", err)
+	}
 
-func extractTarGz(r io.Reader, destDir string) error {
-	gzr, err := gzip.NewReader(r)
-	if err != nil {
-		return err
-	}
-	defer gzr.Close()
-	tr := tar.NewReader(gzr)
-	for {
-		header, err := tr.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return err
-		}
-		name := header.Name
-		if idx := strings.IndexByte(name, '/'); idx != -1 {
-			name = name[idx+1:]
-		}
-		if name == "" {
-			continue
-		}
-		destPath := filepath.Join(destDir, name)
-		switch header.Typeflag {
-		case tar.TypeDir:
-			if err := os.MkdirAll(destPath, 0755); err != nil {
-				return err
-			}
-		case tar.TypeReg:
-			if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
-				return err
-			}
-			out, err := os.Create(destPath)
-			if err != nil {
-				return err
-			}
-			if _, err := io.Copy(out, tr); err != nil {
-				out.Close()
-				return err
-			}
-			out.Close()
-			if err := os.Chmod(destPath, os.FileMode(header.Mode)); err != nil {
-				return err
-			}
-		}
-	}
+	fmt.Println("[singbox] бинарник установлен:", BinaryPath())
 	return nil
 }
 
@@ -207,20 +131,23 @@ func (ringWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// Restart — перезапускает Sing-box и настраивает iptables TProxy+REDIRECT.
-// serverHosts — список доменов/IP VLESS-серверов для исключения из iptables.
+// Restart — перезапускает Sing-box с `-C config.d`.
+// serverHosts — не используется в v3.0.0 (оставлен для совместимости API).
 func Restart(serverHosts []string) error {
+	_ = serverHosts // не используется в v3
+
 	killOld()
+
 	if _, err := os.Stat(BinaryPath()); err != nil {
 		return fmt.Errorf("sing-box не установлен: %w", err)
 	}
-	if _, err := os.Stat(ConfigPath()); err != nil {
-		return fmt.Errorf("config.json не найден: %w", err)
+	if _, err := os.Stat(ConfigDir()); err != nil {
+		return fmt.Errorf("config.d не найден: %w (сначала нажми «Применить»)", err)
 	}
 
 	LogRing.Clear()
 
-	args := singBoxArgs("run", "-c", ConfigPath())
+	args := singBoxArgs("run", "-C", ConfigDir())
 	fmt.Printf("[singbox] запускаем: %v\n", args)
 
 	cmd := exec.Command(args[0], args[1:]...)
@@ -258,28 +185,16 @@ func Restart(serverHosts []string) error {
 		return nil
 	}
 	fmt.Println("[singbox] Clash API готов")
-
-	// Настраиваем iptables TProxy+REDIRECT
-	if runtime.GOOS == "linux" {
-		vlessIPs := ResolveServerIPs(serverHosts)
-		fmt.Printf("[singbox] VLESS-IP для исключения: %v\n", vlessIPs)
-
-		if err := iptables.Setup(vlessIPs); err != nil {
-			fmt.Printf("[singbox] предупреждение: iptables: %v\n", err)
-		}
-	}
 	return nil
 }
 
-// Stop — останавливает Sing-box и очищает iptables.
+// Stop — останавливает Sing-box.
 func Stop() error {
 	killOld()
-	if runtime.GOOS == "linux" {
-		iptables.Cleanup()
-	}
 	return nil
 }
 
+// killOld — убивает старый процесс Sing-box.
 func killOld() {
 	pidPath := InstallDir() + "/sing-box.pid"
 	if data, err := os.ReadFile(pidPath); err == nil {
@@ -293,10 +208,27 @@ func killOld() {
 			}
 		}
 	}
+	// Убиваем по имени (включая запущенные через ld-linux)
 	exec.Command("killall", "sing-box").Run()
+	exec.Command("sh", "-c",
+		"ps -w | grep -E 'ld-linux.*sing-box' | grep -v grep | awk '{print $1}' | xargs -r kill -9").
+		Run()
 	time.Sleep(300 * time.Millisecond)
+}
 
-	if runtime.GOOS == "linux" {
-		iptables.Cleanup()
-	}
+// WriteVersion — записывает версию в файл (для диагностики).
+func WriteVersion() error {
+	meta := fmt.Sprintf(`{"version":"%s","binary":"%s"}`, Version, BinaryPath())
+	return os.WriteFile(filepath.Join(InstallDir(), "sing-box.meta.json"), []byte(meta), 0644)
+}
+
+// Hostname — для отладки.
+func Hostname() string {
+	h, _ := os.Hostname()
+	return strings.TrimSpace(h)
+}
+
+// IsLinux — true если linux.
+func IsLinux() bool {
+	return runtime.GOOS == "linux"
 }

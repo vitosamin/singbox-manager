@@ -1,16 +1,16 @@
 #!/bin/sh
-# Установщик Sing-box Manager для Keenetic (Entware).
+# Установщик Sing-box Manager v3.0.0 для Keenetic (Entware).
 # Запуск:
 #   wget -qO- https://github.com/vitosamin/singbox-manager/raw/main/scripts/install.sh | sh
-# Или:
-#   curl -sL https://github.com/vitosamin/singbox-manager/raw/main/scripts/install.sh | sh
 
 set -e
 
 REPO="vitosamin/singbox-manager"
-BIN_PATH="/opt/bin/singbox-manager"
+MANAGER_BIN_PATH="/opt/bin/singbox-manager"
+SINGBOX_BIN_PATH="/opt/etc/sing-box/sing-box"
 INIT_PATH="/opt/etc/init.d/S99singbox-manager"
 DATA_DIR="/opt/etc/sing-box"
+CONFIG_D="${DATA_DIR}/config.d"
 TMP_DIR="/tmp"
 
 # --- Проверки ---
@@ -19,25 +19,47 @@ if [ ! -d /opt/etc ]; then
     exit 1
 fi
 
+if ! command -v ndmc >/dev/null 2>&1; then
+    echo "ПРЕДУПРЕЖДЕНИЕ: ndmc не найден. Прокси в Keenetic не будут созданы автоматически."
+    echo "             Установка продолжится, но маршрутизация не заработает."
+fi
+
 # --- Определение архитектуры ---
 ARCH=$(uname -m)
 case "$ARCH" in
-    aarch64|arm64) BIN_NAME="singbox-manager-arm64" ;;
-    mips)          BIN_NAME="singbox-manager-mipsle" ;;
+    aarch64|arm64) MANAGER_BIN="singbox-manager-arm64" ;;
+    mips)          MANAGER_BIN="singbox-manager-mipsle" ;;
     *)
         echo "ОШИБКА: неподдерживаемая архитектура: $ARCH"
         exit 1
         ;;
 esac
 
-echo "=== Sing-box Manager Installer ==="
-echo "Архитектура: $ARCH -> $BIN_NAME"
+echo "=== Sing-box Manager v3.0.0 Installer ==="
+echo "Архитектура: $ARCH -> $MANAGER_BIN"
 
-# --- Скачивание бинарника ---
-URL="https://github.com/$REPO/releases/latest/download/$BIN_NAME"
-echo "Скачиваем $URL ..."
+# --- Остановка старой версии ---
+if [ -x "$INIT_PATH" ]; then
+    echo "Останавливаем старую версию..."
+    "$INIT_PATH" stop 2>/dev/null || true
+fi
+killall singbox-manager 2>/dev/null || true
 
+# --- Убираем старые iptables-скрипты (если остались от v2) ---
+rm -f /opt/etc/init.d/S55singbox-tproxy.sh
+rm -f /opt/etc/ndm/netfilter.d/50-singbox.sh
+
+# --- Каталоги ---
+mkdir -p "$DATA_DIR"
+mkdir -p "$CONFIG_D"
+mkdir -p /opt/var/run /opt/var/log
+
+# --- Скачивание менеджера ---
+echo ""
+echo "==> Скачиваем менеджер: $MANAGER_BIN"
 cd "$TMP_DIR"
+URL="https://github.com/$REPO/releases/latest/download/$MANAGER_BIN"
+
 if command -v curl >/dev/null 2>&1; then
     curl -L -o singbox-manager.new "$URL"
 elif command -v wget >/dev/null 2>&1; then
@@ -48,35 +70,50 @@ else
 fi
 
 if [ ! -f singbox-manager.new ]; then
-    echo "ОШИБКА: не удалось скачать бинарник"
+    echo "ОШИБКА: не удалось скачать менеджер"
     exit 1
 fi
 
 chmod +x singbox-manager.new
+mv singbox-manager.new "$MANAGER_BIN_PATH"
+chmod +x "$MANAGER_BIN_PATH"
+echo "    OK: $MANAGER_BIN_PATH"
 
-# --- Остановка старой версии ---
-if [ -x "$INIT_PATH" ]; then
-    echo "Останавливаем старую версию..."
-    "$INIT_PATH" stop 2>/dev/null || true
+# --- Скачивание бинарника Sing-box (AWG-сборка) ---
+if [ ! -f "$SINGBOX_BIN_PATH" ]; then
+    echo ""
+    echo "==> Скачиваем Sing-box (AWG-сборка, поддерживает XTLS-Vision)"
+    SINGBOX_URL="https://github.com/$REPO/releases/download/sing-box-v1.15.0-awgm.31/singbox-1.15.0-alpha.10-awgm.31-aarch64-3.10"
+
+    if command -v curl >/dev/null 2>&1; then
+        curl -L -o sing-box.new "$SINGBOX_URL"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -O sing-box.new "$SINGBOX_URL"
+    else
+        echo "ОШИБКА: нет ни curl, ни wget"
+        exit 1
+    fi
+
+    if [ ! -f sing-box.new ]; then
+        echo "ОШИБКА: не удалось скачать Sing-box"
+        exit 1
+    fi
+
+    chmod +x sing-box.new
+    mv sing-box.new "$SINGBOX_BIN_PATH"
+    chmod +x "$SINGBOX_BIN_PATH"
+    echo "    OK: $SINGBOX_BIN_PATH"
+else
+    echo ""
+    echo "==> Sing-box уже установлен: $SINGBOX_BIN_PATH"
 fi
-killall singbox-manager 2>/dev/null || true
 
-# --- Установка бинарника ---
-echo "Устанавливаем в $BIN_PATH ..."
-mv singbox-manager.new "$BIN_PATH"
-chmod +x "$BIN_PATH"
-
-# --- Каталоги ---
-mkdir -p "$DATA_DIR"
-mkdir -p /opt/var/run /opt/var/log
-
-# --- Init-скрипт ---
-echo "Устанавливаем init-скрипт в $INIT_PATH ..."
+# --- Init-скрипт менеджера ---
+echo ""
+echo "==> Устанавливаем init-скрипт: $INIT_PATH"
 cat > "$INIT_PATH" << 'INIT_EOF'
 #!/bin/sh
-# Init-скрипт для Sing-box Manager на Keenetic (Entware).
-# ВАЖНО: на Keenetic нет nohup. Определяем процесс по ps.
-
+# Init-скрипт для Sing-box Manager (Keenetic, Entware).
 BIN=/opt/bin/singbox-manager
 LOGFILE=/opt/var/log/singbox-manager.log
 ADDR=":9091"
@@ -130,14 +167,15 @@ INIT_EOF
 chmod +x "$INIT_PATH"
 
 # --- Запуск ---
-echo "Запускаем..."
+echo ""
+echo "==> Запускаем менеджер..."
 "$INIT_PATH" start
 
 # --- Итог ---
 IP=$(ip addr show br0 2>/dev/null | grep "inet " | awk '{print $2}' | cut -d/ -f1 || echo "IP-роутера")
 echo ""
 echo "═══════════════════════════════════════════════════════════"
-echo "  Sing-box Manager установлен и запущен!"
+echo "  Sing-box Manager v3.0.0 установлен и запущен!"
 echo ""
 echo "  Открой в браузере:  http://$IP:9091"
 echo "  Пароль по умолчанию: admin"
@@ -145,8 +183,20 @@ echo ""
 echo "  Смени пароль сразу после входа!"
 echo "═══════════════════════════════════════════════════════════"
 echo ""
+echo "Как пользоваться:"
+echo "  1. Открой UI → добавь серверы (VLESS-ссылки)"
+echo "  2. Включи списки обхода (YouTube, Telegram, ...)"
+echo "  3. Нажми «Применить»"
+echo ""
+echo "  При «Применить» менеджер:"
+echo "    - сгенерирует config.d/ для Sing-box"
+echo "    - создаст прокси в Keenetic через ndmc"
+echo "    - запустит Sing-box"
+echo ""
+echo "  Далее настрой маршрутизацию в HR Neo / Keenetic policy."
+echo ""
 echo "Управление:"
-echo "  $INIT_PATH start    — запустить"
+echo "  $INIT_PATH start    — запустить менеджер"
 echo "  $INIT_PATH stop     — остановить"
 echo "  $INIT_PATH restart  — перезапустить"
 echo "  $INIT_PATH status   — статус"

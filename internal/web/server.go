@@ -13,6 +13,7 @@ import (
 	"github.com/shapovalenko/keenetic-singbox-manager/internal/config"
 	"github.com/shapovalenko/keenetic-singbox-manager/internal/failover"
 	"github.com/shapovalenko/keenetic-singbox-manager/internal/monitor"
+	"github.com/shapovalenko/keenetic-singbox-manager/internal/ndmc"
 	"github.com/shapovalenko/keenetic-singbox-manager/internal/ruleset"
 	"github.com/shapovalenko/keenetic-singbox-manager/internal/singbox"
 	"github.com/shapovalenko/keenetic-singbox-manager/internal/state"
@@ -403,15 +404,9 @@ func handleLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleRestart — перезапуск Sing-box без пересборки конфига.
+// В v3.0.0 serverHosts не нужен (нет iptables).
 func handleRestart(w http.ResponseWriter, r *http.Request) {
-	st := store.Snapshot()
-	var serverHosts []string
-	for _, p := range st.Proxies {
-		if p.Server != "" {
-			serverHosts = append(serverHosts, p.Server)
-		}
-	}
-	if err := singbox.Restart(serverHosts); err != nil {
+	if err := singbox.Restart(nil); err != nil {
 		writeJSON(w, map[string]interface{}{"error": err.Error()})
 		return
 	}
@@ -444,17 +439,26 @@ func handleImport(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]interface{}{"ok": true})
 }
 
-// handleApply — ГЛАВНОЕ: пересобирает конфиг и перезапускает Sing-box.
+// handleApply — ГЛАВНОЕ:
+//   1. Скачивает .srs
+//   2. Генерирует config.d/
+//   3. Создаёт прокси в Keenetic через ndmc
+//   4. Запускает Sing-box с -C config.d
 func handleApply(w http.ResponseWriter, r *http.Request) {
 	st := store.Snapshot()
 
+	if len(st.Proxies) == 0 {
+		writeJSON(w, map[string]interface{}{"error": "нет серверов — сначала добавь хотя бы один"})
+		return
+	}
+
+	// 1. Скачиваем .srs
 	for _, id := range st.EnabledLists {
 		if _, err := ruleset.DownloadByID(id); err != nil {
 			writeJSON(w, map[string]interface{}{"error": fmt.Sprintf("download %s: %v", id, err)})
 			return
 		}
 	}
-
 	for _, srs := range st.CustomSRS {
 		if _, err := ruleset.Download(srs.ID, srs.URL); err != nil {
 			writeJSON(w, map[string]interface{}{"error": fmt.Sprintf("download custom %s: %v", srs.Name, err)})
@@ -462,25 +466,48 @@ func handleApply(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := config.Generate(
+	// 2. Генерируем config.d/
+	if err := config.GenerateV3(
 		st.EnabledLists, st.CustomRules, st.CustomSRS,
-		st.Proxies, st.Groups, st.DNS, st.Devices, singbox.ConfigPath(),
+		st.Proxies, st.Groups, st.DNS, st.Devices,
+		singbox.InstallDir(),
 	); err != nil {
 		writeJSON(w, map[string]interface{}{"error": fmt.Sprintf("generate: %v", err)})
 		return
 	}
 
-	// Собираем список серверов для исключения из MARK
-	var serverHosts []string
-	for _, p := range st.Proxies {
-		if p.Server != "" {
-			serverHosts = append(serverHosts, p.Server)
-		}
-	}
-	fmt.Printf("[web] серверы для исключения из MARK: %v\n", serverHosts)
+	// 3. Создаём прокси в Keenetic через ndmc
+	if ndmc.IsAvailable() {
+		fmt.Println("[web] ndmc доступен — создаём прокси в Keenetic...")
 
+		// Убираем старые прокси с нашим префиксом
+		if err := ndmc.CleanupAllProxies(); err != nil {
+			fmt.Printf("[web] предупреждение: cleanup ndmc: %v\n", err)
+		}
+
+		// Собираем имена серверов
+		serverNames := make([]string, 0, len(st.Proxies))
+		for _, p := range st.Proxies {
+			name := p.Server
+			if name == "" {
+				name = p.Tag
+			}
+			serverNames = append(serverNames, name)
+		}
+
+		// Создаём новые
+		configs := ndmc.BuildConfigs(serverNames)
+		if err := ndmc.SetupProxies(configs); err != nil {
+			writeJSON(w, map[string]interface{}{"error": fmt.Sprintf("ndmc: %v", err)})
+			return
+		}
+	} else {
+		fmt.Println("[web] предупреждение: ndmc недоступен — прокси не созданы")
+	}
+
+	// 4. Запускаем Sing-box с -C config.d
 	if st.Settings.RestartOnApply {
-		if err := singbox.Restart(serverHosts); err != nil {
+		if err := singbox.Restart(nil); err != nil {
 			writeJSON(w, map[string]interface{}{"error": fmt.Sprintf("restart: %v", err)})
 			return
 		}
