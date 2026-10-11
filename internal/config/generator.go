@@ -96,24 +96,18 @@ func buildTunnels(proxies []subscription.Proxy, groups GroupConfig, enabledIDs [
 			"listen":      "0.0.0.0",
 			"listen_port": TProxyPort,
 			"network":     []string{"tcp", "udp"},
-			"sniff":                      true,
-			"sniff_override_destination": true,
 		},
 		{
 			"type":        "redirect",
 			"tag":         "redirect-in",
 			"listen":      "0.0.0.0",
 			"listen_port": RedirectPort,
-			"sniff":                      true,
-			"sniff_override_destination": true,
 		},
 		{
 			"type":        "mixed",
 			"tag":         "mixed-in",
 			"listen":      "127.0.0.1",
 			"listen_port": BasePort,
-			"sniff":                      true,
-			"sniff_override_destination": true,
 		},
 	}
 
@@ -143,7 +137,17 @@ func buildTunnels(proxies []subscription.Proxy, groups GroupConfig, enabledIDs [
 	}
 
 	ruleSets := make([]map[string]interface{}, 0, len(enabledIDs)+len(customSRS))
-	rules := make([]map[string]interface{}, 0, len(enabledIDs)+len(customSRS))
+	rules := make([]map[string]interface{}, 0, len(enabledIDs)+len(customSRS)+2)
+
+	// ВАЖНО: первым правилом — sniff (для определения доменов),
+	// вторым — hijack-dns (для перехвата DNS).
+	rules = append(rules, map[string]interface{}{
+		"action": "sniff",
+	})
+	rules = append(rules, map[string]interface{}{
+		"protocol": "dns",
+		"action":   "hijack-dns",
+	})
 
 	for _, id := range enabledIDs {
 		path := "/opt/etc/sing-box/rulesets/" + id + ".srs"
