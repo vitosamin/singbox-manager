@@ -1,7 +1,7 @@
 let state = {
     proxies: [], enabled: [], groups: {}, custom_rules: [],
     custom_srs: [], subscription: '', dns: null, devices: [], theme: 'dark',
-    settings: null,
+    settings: null, vpn_enabled: false,
 };
 let catalogCache = [];
 let logsTimer = null;
@@ -113,6 +113,7 @@ async function loadState() {
     state.devices      = s.devices || [];
     state.theme        = s.theme || 'dark';
     state.settings     = s.settings || null;
+    state.vpn_enabled  = s.vpn_enabled === true;
 
     applyTheme(state.theme);
     renderServers();
