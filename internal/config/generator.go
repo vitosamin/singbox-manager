@@ -45,7 +45,7 @@ func GenerateV3(
 		return fmt.Errorf("00-base: %w", err)
 	}
 
-	tunnels, err := buildTunnels(proxies, groups, enabledIDs, customSRS)
+	tunnels, err := buildTunnels(proxies, groups, enabledIDs, customSRS, customRules)
 	if err != nil {
 		return fmt.Errorf("10-tunnels: %w", err)
 	}
@@ -88,7 +88,13 @@ func buildBase() map[string]interface{} {
 	}
 }
 
-func buildTunnels(proxies []subscription.Proxy, groups GroupConfig, enabledIDs []string, customSRS []ruleset.CustomSRS) (map[string]interface{}, error) {
+func buildTunnels(
+	proxies []subscription.Proxy,
+	groups GroupConfig,
+	enabledIDs []string,
+	customSRS []ruleset.CustomSRS,
+	customRules []ruleset.CustomRule,
+) (map[string]interface{}, error) {
 	inbounds := []map[string]interface{}{
 		{
 			"type":        "tproxy",
@@ -111,6 +117,7 @@ func buildTunnels(proxies []subscription.Proxy, groups GroupConfig, enabledIDs [
 		},
 	}
 
+	// Outbounds: серверы
 	outbounds := make([]map[string]interface{}, 0, len(proxies))
 	for _, p := range proxies {
 		ob := proxyToOutbound(p)
@@ -121,6 +128,8 @@ func buildTunnels(proxies []subscription.Proxy, groups GroupConfig, enabledIDs [
 		outbounds = append(outbounds, ob)
 	}
 
+	// Селекторы: по группам
+	selectorTags := make([]string, 0, len(groups))
 	for name, g := range groups {
 		tags := g.PriorityTags()
 		if len(tags) == 0 {
@@ -134,21 +143,56 @@ func buildTunnels(proxies []subscription.Proxy, groups GroupConfig, enabledIDs [
 			"default":   tags[0],
 		}
 		outbounds = append(outbounds, selector)
+		selectorTags = append(selectorTags, selectorTag)
 	}
 
+	// route.rule_set + route.rules
 	ruleSets := make([]map[string]interface{}, 0, len(enabledIDs)+len(customSRS))
-	rules := make([]map[string]interface{}, 0, len(enabledIDs)+len(customSRS)+2)
+	rules := make([]map[string]interface{}, 0, len(enabledIDs)+len(customSRS)+len(customRules)+2)
 
-	// ВАЖНО: первым правилом — sniff (для определения доменов),
-	// вторым — hijack-dns (для перехвата DNS).
+	// 1. action: sniff — читает SNI/домены
 	rules = append(rules, map[string]interface{}{
 		"action": "sniff",
 	})
+	// 2. action: hijack-dns — перехват DNS
 	rules = append(rules, map[string]interface{}{
 		"protocol": "dns",
 		"action":   "hijack-dns",
 	})
 
+	// 3. Custom rules (приоритет выше rule_set)
+	for _, rule := range customRules {
+		if !rule.Enabled {
+			continue
+		}
+		r := map[string]interface{}{}
+		if len(rule.Domains) > 0 {
+			r["domain"] = rule.Domains
+		}
+		if len(rule.IPCIDRs) > 0 {
+			r["ip_cidr"] = rule.IPCIDRs
+		}
+		if len(r) == 0 {
+			continue
+		}
+		// Куда направить:
+		// 1) rule.Outbound если задан явно;
+		// 2) proxy-<rule.ID> если есть селектор с таким ID;
+		// 3) proxy-default.
+		outbound := rule.Outbound
+		if outbound == "" {
+			candidate := "proxy-" + rule.ID
+			if hasTag(selectorTags, candidate) {
+				outbound = candidate
+			} else {
+				outbound = "proxy-default"
+			}
+		}
+		r["outbound"] = outbound
+		rules = append(rules, r)
+	}
+
+	// 4. rule_set из .srs-каталога
 	for _, id := range enabledIDs {
 		path := "/opt/etc/sing-box/rulesets/" + id + ".srs"
 		if _, err := os.Stat(path); err != nil {
@@ -167,6 +211,7 @@ func buildTunnels(proxies []subscription.Proxy, groups GroupConfig, enabledIDs [
 		})
 	}
 
+	// 5. rule_set из custom .srs
 	for _, srs := range customSRS {
 		path := "/opt/etc/sing-box/rulesets/" + srs.ID + ".srs"
 		if _, err := os.Stat(path); err != nil {
@@ -202,19 +247,24 @@ func buildTunnels(proxies []subscription.Proxy, groups GroupConfig, enabledIDs [
 	}, nil
 }
 
+func hasTag(tags []string, target string) bool {
+	for _, t := range tags {
+		if t == target {
+			return true
+		}
+	}
+	return false
+}
+
 func buildDNSRewrites() map[string]interface{} {
 	return map[string]interface{}{
 		"dns": map[string]interface{}{
 			"servers": []map[string]interface{}{
-				{
-					"type":   "udp",
-					"tag":    "keendns-router",
-					"server": "127.0.0.1",
-				},
+				{"type": "udp", "tag": "keendns-router", "server": "127.0.0.1"},
 			},
 			"rules": []map[string]interface{}{
 				{
-					"domain": []string{"my.keenetic.net", "my.netcraze.net"},
+					"domain":        []string{"my.keenetic.net", "my.netcraze.net"},
 					"domain_suffix": []string{
 						"keenetic.pro", "keenetic.link", "keenetic.name",
 						"keenetic.io", "netcraze.pro", "netcraze.net",
@@ -232,19 +282,13 @@ func buildDefaults(dnsCfg DNSConfig) map[string]interface{} {
 	return map[string]interface{}{
 		"dns": map[string]interface{}{
 			"servers": []map[string]interface{}{
-				{
-					"type":   "udp",
-					"tag":    "dns-bootstrap",
-					"server": "1.1.1.1",
-				},
+				{"type": "udp", "tag": "dns-bootstrap", "server": "1.1.1.1"},
 			},
 			"optimistic": true,
 			"strategy":   "prefer_ipv4",
 		},
 		"route": map[string]interface{}{
-			"default_domain_resolver": map[string]interface{}{
-				"server": "dns-bootstrap",
-			},
+			"default_domain_resolver": map[string]interface{}{"server": "dns-bootstrap"},
 		},
 	}
 }
