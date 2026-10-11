@@ -4,7 +4,6 @@ let state = {
     settings: null,
 };
 let catalogCache = [];
-let monitorTimer = null;
 let logsTimer = null;
 let logsAuto = true;
 let currentTab = 'servers';
@@ -25,7 +24,6 @@ const TAB_META = {
     dns:        { title: 'DNS',               sub: 'DNS-серверы и резолвинг' },
     sync:       { title: 'Синхронизация',     sub: 'Автообновление списков' },
     settings:   { title: 'Настройки',         sub: 'Логи, рестарт, экспорт' },
-    monitor:    { title: 'Мониторинг',        sub: 'Состояние outbounds' },
     logs:       { title: 'Журнал',            sub: 'Лог Sing-box в оперативке' },
 };
 
@@ -44,7 +42,6 @@ function switchTab(tab) {
     document.getElementById('page-title').textContent = meta.title;
     document.getElementById('page-sub').textContent = meta.sub;
     window.scrollTo({ top: 0, behavior: 'smooth' });
-    if (tab === 'monitor') refreshMonitor();
     if (tab === 'logs') refreshLogs();
 }
 
@@ -129,9 +126,7 @@ async function loadState() {
     updateBadges();
     switchTab(currentTab);
 
-    if (monitorTimer) clearInterval(monitorTimer);
     refreshMonitor();
-    monitorTimer = setInterval(refreshMonitor, 5000);
 
     if (logsTimer) clearInterval(logsTimer);
     refreshLogs();

@@ -360,3 +360,7 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
 
 .mobile-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 25; }
 .mobile-overlay.active { display: block; }
+
+/* Скрываем вкладку "Мониторинг" — контент не создаётся, страница не нужна */
+.nav-tab[data-tab="monitor"] { display: none !important; }
+.tab-page[data-page="monitor"] { display: none !important; }
