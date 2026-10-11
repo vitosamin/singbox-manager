@@ -1,5 +1,5 @@
 #!/bin/sh
-# Установщик Sing-box Manager v4.0.0 для Keenetic (Entware).
+# Установщик Sing-box Manager v4.2.0 для Keenetic (Entware).
 # Запуск:
 #   wget -qO- https://github.com/vitosamin/singbox-manager/raw/main/scripts/install.sh | sh
 
@@ -12,7 +12,6 @@ INIT_PATH="/opt/etc/init.d/S99singbox-manager"
 DATA_DIR="/opt/etc/sing-box"
 CONFIG_D="${DATA_DIR}/config.d"
 TMP_DIR="/tmp"
-NETFILTER_HOOK="/opt/etc/ndm/netfilter.d/50-singbox.sh"
 
 # --- Проверки ---
 if [ ! -d /opt/etc ]; then
@@ -39,8 +38,6 @@ if [ "$HAS_TPROXY" -lt 2 ]; then
     echo "   Веб-админка → Общие настройки → Изменить набор компонентов →"
     echo "   Сетевые функции → Модули ядра для Netfilter"
     echo ""
-    echo "   Без них TProxy (UDP) не заработает. TCP через REDIRECT будет работать."
-    echo ""
 fi
 
 # --- Определение архитектуры ---
@@ -54,7 +51,7 @@ case "$ARCH" in
         ;;
 esac
 
-echo "=== Sing-box Manager v4.0.0 Installer ==="
+echo "=== Sing-box Manager v4.2.0 Installer ==="
 echo "Архитектура: $ARCH -> $MANAGER_BIN"
 
 # --- Остановка старой версии ---
@@ -64,10 +61,6 @@ if [ -x "$INIT_PATH" ]; then
 fi
 killall singbox-manager 2>/dev/null || true
 killall sing-box 2>/dev/null || true
-
-# --- Убираем старые iptables-скрипты (если остались от v2/v3) ---
-rm -f /opt/etc/init.d/S55singbox-tproxy.sh
-rm -f "$NETFILTER_HOOK"
 
 # --- Каталоги ---
 mkdir -p "$DATA_DIR"
@@ -131,78 +124,6 @@ else
     echo "==> Sing-box уже установлен: $SINGBOX_BIN_PATH"
 fi
 
-# --- Netfilter-хук для TProxy ---
-echo ""
-echo "==> Устанавливаем netfilter-хук: $NETFILTER_HOOK"
-mkdir -p "$(dirname "$NETFILTER_HOOK")"
-
-cat > "$NETFILTER_HOOK" << 'HOOK_EOF'
-#!/bin/sh
-# Netfilter-хук для sing-box (TProxy + REDIRECT).
-# Keenetic вызывает его при каждом применении правил netfilter.
-[ "$type" != "iptables" ] && exit 0
-
-# Определяем LAN-интерфейс
-LAN_IFACE="br0"
-LAN_NET="192.168.35.0/24"
-WG_NET="172.16.6.0/24"
-VPS_IPS="91.132.224.49"
-
-# Цепочки
-CHAIN_TCP="SB_TCP"
-CHAIN_UDP="SB_UDP"
-
-if [ "$table" = "nat" ]; then
-    # TCP → REDIRECT
-    iptables -t nat -N $CHAIN_TCP 2>/dev/null
-    iptables -t nat -F $CHAIN_TCP 2>/dev/null
-
-    # Исключения (RETURN перед REDIRECT)
-    for ip in $VPS_IPS; do
-        iptables -t nat -A $CHAIN_TCP -d "$ip" -j RETURN
-    done
-    for net in "$LAN_NET" "$WG_NET" 127.0.0.0/8 224.0.0.0/4 255.255.255.255/32; do
-        iptables -t nat -A $CHAIN_TCP -d "$net" -j RETURN
-    done
-    iptables -t nat -A $CHAIN_TCP -p tcp --dport 53 -j RETURN
-
-    # Всё остальное → REDIRECT
-    iptables -t nat -A $CHAIN_TCP -p tcp -j REDIRECT --to-ports 1082
-
-    # Хук в PREROUTING
-    iptables -t nat -C PREROUTING -i $LAN_IFACE -p tcp -j $CHAIN_TCP 2>/dev/null || \
-    iptables -t nat -A PREROUTING -i $LAN_IFACE -p tcp -j $CHAIN_TCP
-fi
-
-if [ "$table" = "mangle" ]; then
-    # UDP → TPROXY
-    iptables -t mangle -N $CHAIN_UDP 2>/dev/null
-    iptables -t mangle -F $CHAIN_UDP 2>/dev/null
-
-    for ip in $VPS_IPS; do
-        iptables -t mangle -A $CHAIN_UDP -d "$ip" -j RETURN
-    done
-    for net in "$LAN_NET" "$WG_NET" 127.0.0.0/8 224.0.0.0/4; do
-        iptables -t mangle -A $CHAIN_UDP -d "$net" -j RETURN
-    done
-    iptables -t mangle -A $CHAIN_UDP -p udp --dport 53 -j RETURN
-
-    iptables -t mangle -A $CHAIN_UDP -p udp -j TPROXY --on-port 1081 --tproxy-mark 0x1
-
-    iptables -t mangle -C PREROUTING -i $LAN_IFACE -p udp -j $CHAIN_UDP 2>/dev/null || \
-    iptables -t mangle -A PREROUTING -i $LAN_IFACE -p udp -j $CHAIN_UDP
-
-    # ip rule + ip route для TProxy
-    ip rule add fwmark 0x1 table 100 2>/dev/null
-    ip route add local default dev lo table 100 2>/dev/null
-fi
-
-exit 0
-HOOK_EOF
-
-chmod +x "$NETFILTER_HOOK"
-echo "    OK: $NETFILTER_HOOK"
-
 # --- Init-скрипт менеджера ---
 echo ""
 echo "==> Устанавливаем init-скрипт: $INIT_PATH"
@@ -234,15 +155,6 @@ case "$1" in
         echo "Остановка..."
         killall singbox-manager 2>/dev/null
         killall sing-box 2>/dev/null
-        # Убираем наши iptables-правила
-        iptables -t nat -D PREROUTING -i br0 -p tcp -j SB_TCP 2>/dev/null
-        iptables -t mangle -D PREROUTING -i br0 -p udp -j SB_UDP 2>/dev/null
-        iptables -t nat -F SB_TCP 2>/dev/null
-        iptables -t mangle -F SB_UDP 2>/dev/null
-        iptables -t nat -X SB_TCP 2>/dev/null
-        iptables -t mangle -X SB_UDP 2>/dev/null
-        ip rule del fwmark 0x1 table 100 2>/dev/null
-        ip route del local default dev lo table 100 2>/dev/null
         echo "OK"
         ;;
     restart)
@@ -268,7 +180,46 @@ INIT_EOF
 
 chmod +x "$INIT_PATH"
 
-# --- Запуск ---
+# --- Cron: бэкап state.json раз в сутки ---
+echo ""
+echo "==> Устанавливаем cron-бэкап state.json"
+CRONDAILY_DIR="/opt/etc/cron.daily"
+if [ -d "$CRONDAILY_DIR" ] || mkdir -p "$CRONDAILY_DIR" 2>/dev/null; then
+    cat > "$CRONDAILY_DIR/backup-state" << 'CRON_EOF'
+#!/bin/sh
+# Создаёт ежедневный бэкап state.json и config.d/.
+# Хранит последние 7 бэкапов.
+
+BACKUP_DIR="/opt/etc/sing-box/backups"
+mkdir -p "$BACKUP_DIR"
+
+DATE=$(date +%Y%m%d)
+STATE_SRC="/opt/etc/sing-box/state.json"
+CONFIG_SRC="/opt/etc/sing-box/config.d"
+
+[ -f "$STATE_SRC" ] && cp "$STATE_SRC" "$BACKUP_DIR/state-$DATE.json"
+[ -d "$CONFIG_SRC" ] && tar czf "$BACKUP_DIR/config-$DATE.tar.gz" -C "$(dirname "$CONFIG_SRC")" "$(basename "$CONFIG_SRC")" 2>/dev/null
+
+# Удаляем бэкапы старше 7 дней.
+find "$BACKUP_DIR" -name "state-*.json" -mtime +7 -delete 2>/dev/null
+find "$BACKUP_DIR" -name "config-*.tar.gz" -mtime +7 -delete 2>/dev/null
+
+exit 0
+CRON_EOF
+
+    chmod +x "$CRONDAILY_DIR/backup-state"
+    echo "    OK: $CRONDAILY_DIR/backup-state"
+else
+    echo "    ПРЕДУПРЕЖДЕНИЕ: не удалось создать $CRONDAILY_DIR"
+    echo "    Бэкап state.json будет недоступен."
+fi
+
+# --- Перезапуск cron (если запущен) ---
+if [ -x /opt/etc/init.d/S10cron ]; then
+    /opt/etc/init.d/S10cron restart >/dev/null 2>&1 || true
+fi
+
+# --- Запуск менеджера ---
 echo ""
 echo "==> Запускаем менеджер..."
 "$INIT_PATH" start
@@ -277,7 +228,7 @@ echo "==> Запускаем менеджер..."
 IP=$(ip addr show br0 2>/dev/null | grep "inet " | awk '{print $2}' | cut -d/ -f1 || echo "IP-роутера")
 echo ""
 echo "═══════════════════════════════════════════════════════════"
-echo "  Sing-box Manager v4.0.0 установлен и запущен!"
+echo "  Sing-box Manager v4.2.0 установлен и запущен!"
 echo ""
 echo "  Открой в браузере:  http://$IP:9091"
 echo "  Пароль по умолчанию: admin"
@@ -285,15 +236,13 @@ echo ""
 echo "  Смени пароль сразу после входа!"
 echo "═══════════════════════════════════════════════════════════"
 echo ""
-echo "Как пользоваться:"
-echo "  1. Открой UI → добавь серверы (VLESS-ссылки)"
-echo "  2. Включи списки обхода (YouTube, Telegram, ...)"
-echo "  3. Нажми «Применить»"
-echo ""
-echo "  При «Применить» менеджер:"
-echo "    - сгенерирует config.d/ для Sing-box (TProxy + REDIRECT)"
-echo "    - установит iptables-правила (через netfilter-хук)"
-echo "    - запустит Sing-box"
+echo "Новое в v4.2.0:"
+echo "  ✅ Кнопка «Остановить/Запустить VPN» в шапке"
+echo "  ✅ Кнопка «Проверить правила» в шапке и настройках"
+echo "  ✅ Улучшенный NDMS-хук с retry (5 попыток) — восстанавливает правила"
+echo "     после перестройки netfilter Keenetic"
+echo "  ✅ Fix zombie sing-box через cmd.Wait"
+echo "  ✅ cron-бэкап: state.json + config.d ежедневно (7 дней)"
 echo ""
 echo "Управление:"
 echo "  $INIT_PATH start    — запустить менеджер"
@@ -303,5 +252,5 @@ echo "  $INIT_PATH status   — статус"
 echo ""
 echo "Проверка TProxy:"
 echo "  iptables -t nat -L SB_TCP -n -v"
-echo "  iptables -t mangle -L SB_UDP -n -v"
+echo "  iptables -t mangle -L SB_UDP_TRANSIT -n -v"
 echo "  ip rule show | grep 100"
