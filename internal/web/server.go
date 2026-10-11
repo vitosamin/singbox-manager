@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -427,6 +428,15 @@ func handleLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	text := singbox.LogRing.Tail(500)
+	if len(text) == 0 {
+		if data, err := os.ReadFile("/opt/var/log/sing-box.log"); err == nil {
+			s := string(data)
+			if len(s) > 50000 {
+				s = s[len(s)-50000:]
+			}
+			text = s
+		}
+	}
 	writeJSON(w, map[string]interface{}{"text": text})
 }
 

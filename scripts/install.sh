@@ -148,11 +148,11 @@ case "$1" in
         if [ -d "$CONFIG" ] && [ ! -f "$MARKER" ]; then
             if ! ps -w | grep -v grep | grep -q "sing-box run"; then
                 echo "Автозапуск sing-box..."
-                $LOADER $SINGBOX run -C $CONFIG >> $LOGFILE 2>&1 &
+                $LOADER $SINGBOX run -C $CONFIG > /opt/var/log/sing-box.log 2>&1 &
                 sleep 5
             fi
             # Восстановить iptables-правила
-            if [ -x "$TPROXY_INIT" ] && ! iptables -t nat -L SB_TCP -n >/dev/null 2>&1; then
+            if [ -x "$TPROXY_INIT" ] && { ! iptables -t nat -L SB_TCP -n >/dev/null 2>&1 || ! iptables -t mangle -L SB_UDP_TRANSIT -n >/dev/null 2>&1; }; then
                 echo "Восстановление iptables-правил..."
                 $TPROXY_INIT start >/dev/null 2>&1
             fi
