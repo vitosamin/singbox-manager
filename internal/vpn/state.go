@@ -91,6 +91,12 @@ func IsDisabled() bool {
 	return err == nil
 }
 
+// ForceDisableMarker — создаёт маркер vpn.disabled.
+// Используется watchdog при падении sing-box.
+func ForceDisableMarker() error {
+	return writeMarker()
+}
+
 // writeMarker — создаёт файл-маркер.
 func writeMarker() error {
 	_ = os.MkdirAll("/opt/etc/sing-box", 0755)

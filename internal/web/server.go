@@ -20,6 +20,7 @@ import (
 	"github.com/shapovalenko/keenetic-singbox-manager/internal/state"
 	"github.com/shapovalenko/keenetic-singbox-manager/internal/subscription"
 	"github.com/shapovalenko/keenetic-singbox-manager/internal/vpn"
+	"github.com/shapovalenko/keenetic-singbox-manager/internal/watchdog"
 )
 
 //go:embed templates/* static/*
@@ -114,6 +115,10 @@ func Start(addr string) error {
 	handler := auth.Middleware(authMgr, mux)
 
 	fmt.Printf("[web] сервер запущен на http://%s\n", addr)
+
+	// Запускаем watchdog sing-box.
+	watchdog.Start()
+
 	return http.ListenAndServe(addr, handler)
 }
 
@@ -545,6 +550,10 @@ func handleFirewallCheck(w http.ResponseWriter, r *http.Request) {
 //   3. Резолвит IP серверов и ставит iptables-правила (TProxy + REDIRECT)
 //   4. Запускает Sing-box с -C config.d
 func handleApply(w http.ResponseWriter, r *http.Request) {
+	// Уведомляем watchdog, что идёт Apply (grace-period 10 сек).
+	watchdog.SetApplyInProgress(true)
+	defer watchdog.SetApplyInProgress(false)
+
 	st := store.Snapshot()
 
 	if len(st.Proxies) == 0 {
