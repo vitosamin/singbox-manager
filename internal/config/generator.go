@@ -96,18 +96,24 @@ func buildTunnels(proxies []subscription.Proxy, groups GroupConfig, enabledIDs [
 			"listen":      "0.0.0.0",
 			"listen_port": TProxyPort,
 			"network":     []string{"tcp", "udp"},
+			"sniff":                      true,
+			"sniff_override_destination": true,
 		},
 		{
 			"type":        "redirect",
 			"tag":         "redirect-in",
 			"listen":      "0.0.0.0",
 			"listen_port": RedirectPort,
+			"sniff":                      true,
+			"sniff_override_destination": true,
 		},
 		{
 			"type":        "mixed",
 			"tag":         "mixed-in",
 			"listen":      "127.0.0.1",
 			"listen_port": BasePort,
+			"sniff":                      true,
+			"sniff_override_destination": true,
 		},
 	}
 
