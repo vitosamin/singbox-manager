@@ -445,3 +445,102 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
         padding: 8px 10px;
     }
 }
+
+/* ============================================================
+   Rulesets Status Card — индикатор кэша .srs
+   ============================================================ */
+.rulesets-status-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-bottom: 16px;
+    box-shadow: var(--shadow);
+}
+
+.rulesets-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 8px;
+}
+
+.rulesets-header h3 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text);
+}
+
+.rulesets-hint {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-bottom: 10px;
+}
+
+.rulesets-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.rulesets-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    background: var(--bg);
+    transition: background 0.15s;
+}
+
+.rulesets-row:hover {
+    background: rgba(74, 158, 255, 0.06);
+}
+
+.rulesets-dot {
+    font-size: 12px;
+    width: 16px;
+    text-align: center;
+}
+
+.rulesets-id {
+    flex: 1;
+    color: var(--text);
+    font-weight: 500;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.rulesets-custom-badge {
+    font-size: 9px;
+    background: var(--accent);
+    color: #fff;
+    padding: 1px 5px;
+    border-radius: 6px;
+    text-transform: uppercase;
+    margin-left: 4px;
+}
+
+.rulesets-age {
+    color: var(--text-dim);
+    font-size: 11px;
+    min-width: 50px;
+    text-align: right;
+    font-family: "SF Mono", Consolas, monospace;
+}
+
+.rulesets-btn-refresh {
+    font-size: 11px;
+    padding: 3px 10px;
+    min-width: 70px;
+}
+
+.rulesets-btn-refresh:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}

@@ -100,6 +100,8 @@ func Start(addr string) error {
 	mux.HandleFunc("/api/export", handleExport)
 	mux.HandleFunc("/api/import", handleImport)
 	mux.HandleFunc("/api/apply", handleApply)
+	mux.HandleFunc("/api/rulesets/status", handleRulesetsStatus)
+	mux.HandleFunc("/api/rulesets/refresh", handleRulesetsRefresh)
 
 	// VPN Stop/Start/Status + Firewall Check
 	mux.HandleFunc("/api/vpn/stop", handleVPNStop)

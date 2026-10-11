@@ -101,6 +101,19 @@
         </section>
 
         <section class="tab-page" data-page="rules">
+
+            <div class="rulesets-status-card">
+                <div class="rulesets-header">
+                    <h3>📊 Состояние кэша .srs</h3>
+                    <button id="btn-refresh-all-srs" class="btn primary">🔄 Обновить все</button>
+                </div>
+                <div class="rulesets-hint">
+                    🟢 свежий (&lt; 24ч) · 🟡 старый (&gt; 24ч) · 🔴 файла нет
+                </div>
+                <div id="rulesets-status-list" class="rulesets-list"></div>
+                <div id="rulesets-status-msg" class="status"></div>
+            </div>
+
             <div class="how-it-works">
                 <div class="hiw-title">🧭 Как работает маршрутизация</div>
                 <div class="hiw-steps">
@@ -336,5 +349,6 @@
 
 <script src="/static/app.js"></script>
 <script src="/static/vpn_ui.js"></script>
+<script src="/static/rulesets_ui.js"></script>
 </body>
 </html>
