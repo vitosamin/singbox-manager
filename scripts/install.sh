@@ -1,7 +1,5 @@
 #!/bin/sh
-# Установщик Sing-box Manager v4.2.0 для Keenetic (Entware).
-# Запуск:
-#   wget -qO- https://github.com/vitosamin/singbox-manager/raw/main/scripts/install.sh | sh
+# Установщик Sing-box Manager v4.2.3 для Keenetic (Entware).
 
 set -e
 
@@ -12,18 +10,17 @@ INIT_PATH="/opt/etc/init.d/S99singbox-manager"
 DATA_DIR="/opt/etc/sing-box"
 CONFIG_D="${DATA_DIR}/config.d"
 TMP_DIR="/tmp"
+MARKER="/opt/etc/sing-box/vpn.disabled"
 
-# --- Проверки ---
 if [ ! -d /opt/etc ]; then
-    echo "ОШИБКА: Entware не установлен. Установи поддержку OPKG в KeeneticOS."
+    echo "ОШИБКА: Entware не установлен."
     exit 1
 fi
 
 if ! command -v ndmc >/dev/null 2>&1; then
-    echo "ПРЕДУПРЕЖДЕНИЕ: ndmc не найден. Прокси в Keenetic не будут созданы автоматически."
+    echo "ПРЕДУПРЕЖДЕНИЕ: ndmc не найден."
 fi
 
-# --- Проверка модулей ядра для TProxy ---
 KERNEL=$(uname -r)
 HAS_TPROXY=0
 for p in "/lib/modules/$KERNEL/xt_TPROXY.ko" "/lib/system-modules/xt_TPROXY.ko" \
@@ -34,13 +31,10 @@ done
 if [ "$HAS_TPROXY" -lt 2 ]; then
     echo ""
     echo "⚠️  ВНИМАНИЕ: модули xt_TPROXY / xt_socket не найдены!"
-    echo "   Установи компонент «Модули ядра для Netfilter»:"
-    echo "   Веб-админка → Общие настройки → Изменить набор компонентов →"
-    echo "   Сетевые функции → Модули ядра для Netfilter"
+    echo "   Установи компонент «Модули ядра для Netfilter»."
     echo ""
 fi
 
-# --- Определение архитектуры ---
 ARCH=$(uname -m)
 case "$ARCH" in
     aarch64|arm64) MANAGER_BIN="singbox-manager-arm64" ;;
@@ -51,10 +45,9 @@ case "$ARCH" in
         ;;
 esac
 
-echo "=== Sing-box Manager v4.2.0 Installer ==="
+echo "=== Sing-box Manager v4.2.3 Installer ==="
 echo "Архитектура: $ARCH -> $MANAGER_BIN"
 
-# --- Остановка старой версии ---
 if [ -x "$INIT_PATH" ]; then
     echo "Останавливаем старую версию..."
     "$INIT_PATH" stop 2>/dev/null || true
@@ -62,12 +55,10 @@ fi
 killall singbox-manager 2>/dev/null || true
 killall sing-box 2>/dev/null || true
 
-# --- Каталоги ---
 mkdir -p "$DATA_DIR"
 mkdir -p "$CONFIG_D"
 mkdir -p /opt/var/run /opt/var/log
 
-# --- Скачивание менеджера ---
 echo ""
 echo "==> Скачиваем менеджер: $MANAGER_BIN"
 cd "$TMP_DIR"
@@ -92,7 +83,6 @@ mv singbox-manager.new "$MANAGER_BIN_PATH"
 chmod +x "$MANAGER_BIN_PATH"
 echo "    OK: $MANAGER_BIN_PATH"
 
-# --- Скачивание бинарника Sing-box (официальный 1.14.2) ---
 if [ ! -f "$SINGBOX_BIN_PATH" ]; then
     echo ""
     echo "==> Скачиваем Sing-box 1.14.2 (официальный, SagerNet)"
@@ -124,7 +114,6 @@ else
     echo "==> Sing-box уже установлен: $SINGBOX_BIN_PATH"
 fi
 
-# --- Init-скрипт менеджера ---
 echo ""
 echo "==> Устанавливаем init-скрипт: $INIT_PATH"
 cat > "$INIT_PATH" << 'INIT_EOF'
@@ -132,23 +121,41 @@ cat > "$INIT_PATH" << 'INIT_EOF'
 BIN=/opt/bin/singbox-manager
 LOGFILE=/opt/var/log/singbox-manager.log
 ADDR=":9091"
+MARKER=/opt/etc/sing-box/vpn.disabled
+SINGBOX=/opt/etc/sing-box/sing-box
+LOADER=/opt/lib/ld-linux-aarch64.so.1
+CONFIG=/opt/etc/sing-box/config.d
+TPROXY_INIT=/opt/etc/init.d/S55singbox-tproxy.sh
 
 case "$1" in
     start)
         if ps -w | grep -v grep | grep -q "$BIN"; then
             echo "singbox-manager уже запущен"
-            exit 0
-        fi
-        echo "Запуск singbox-manager..."
-        mkdir -p /opt/var/log
-        $BIN -addr $ADDR > $LOGFILE 2>&1 &
-        sleep 3
-        if ps -w | grep -v grep | grep -q "$BIN"; then
-            echo "OK"
         else
-            echo "ОШИБКА. Лог:"
-            cat $LOGFILE
-            exit 1
+            echo "Запуск singbox-manager..."
+            mkdir -p /opt/var/log
+            $BIN -addr $ADDR > $LOGFILE 2>&1 &
+            sleep 3
+            if ! ps -w | grep -v grep | grep -q "$BIN"; then
+                echo "ОШИБКА. Лог:"
+                cat $LOGFILE
+                exit 1
+            fi
+            echo "OK"
+        fi
+
+        # Автозапуск sing-box, если есть config.d и нет маркера.
+        if [ -d "$CONFIG" ] && [ ! -f "$MARKER" ]; then
+            if ! ps -w | grep -v grep | grep -q "sing-box run"; then
+                echo "Автозапуск sing-box..."
+                $LOADER $SINGBOX run -C $CONFIG >> $LOGFILE 2>&1 &
+                sleep 5
+            fi
+            # Восстановить iptables-правила
+            if [ -x "$TPROXY_INIT" ] && ! iptables -t nat -L SB_TCP -n >/dev/null 2>&1; then
+                echo "Восстановление iptables-правил..."
+                $TPROXY_INIT start >/dev/null 2>&1
+            fi
         fi
         ;;
     stop)
@@ -168,6 +175,11 @@ case "$1" in
         else
             echo "singbox-manager не запущен"
         fi
+        if ps -w | grep -v grep | grep -q "sing-box run"; then
+            echo "sing-box работает"
+        else
+            echo "sing-box не запущен"
+        fi
         ;;
     *)
         echo "Использование: $0 {start|stop|restart|status}"
@@ -180,16 +192,12 @@ INIT_EOF
 
 chmod +x "$INIT_PATH"
 
-# --- Cron: бэкап state.json раз в сутки ---
 echo ""
 echo "==> Устанавливаем cron-бэкап state.json"
 CRONDAILY_DIR="/opt/etc/cron.daily"
 if [ -d "$CRONDAILY_DIR" ] || mkdir -p "$CRONDAILY_DIR" 2>/dev/null; then
     cat > "$CRONDAILY_DIR/backup-state" << 'CRON_EOF'
 #!/bin/sh
-# Создаёт ежедневный бэкап state.json и config.d/.
-# Хранит последние 7 бэкапов.
-
 BACKUP_DIR="/opt/etc/sing-box/backups"
 mkdir -p "$BACKUP_DIR"
 
@@ -200,7 +208,6 @@ CONFIG_SRC="/opt/etc/sing-box/config.d"
 [ -f "$STATE_SRC" ] && cp "$STATE_SRC" "$BACKUP_DIR/state-$DATE.json"
 [ -d "$CONFIG_SRC" ] && tar czf "$BACKUP_DIR/config-$DATE.tar.gz" -C "$(dirname "$CONFIG_SRC")" "$(basename "$CONFIG_SRC")" 2>/dev/null
 
-# Удаляем бэкапы старше 7 дней.
 find "$BACKUP_DIR" -name "state-*.json" -mtime +7 -delete 2>/dev/null
 find "$BACKUP_DIR" -name "config-*.tar.gz" -mtime +7 -delete 2>/dev/null
 
@@ -209,48 +216,28 @@ CRON_EOF
 
     chmod +x "$CRONDAILY_DIR/backup-state"
     echo "    OK: $CRONDAILY_DIR/backup-state"
-else
-    echo "    ПРЕДУПРЕЖДЕНИЕ: не удалось создать $CRONDAILY_DIR"
-    echo "    Бэкап state.json будет недоступен."
 fi
 
-# --- Перезапуск cron (если запущен) ---
 if [ -x /opt/etc/init.d/S10cron ]; then
     /opt/etc/init.d/S10cron restart >/dev/null 2>&1 || true
 fi
 
-# --- Запуск менеджера ---
 echo ""
 echo "==> Запускаем менеджер..."
 "$INIT_PATH" start
 
-# --- Итог ---
 IP=$(ip addr show br0 2>/dev/null | grep "inet " | awk '{print $2}' | cut -d/ -f1 || echo "IP-роутера")
 echo ""
 echo "═══════════════════════════════════════════════════════════"
-echo "  Sing-box Manager v4.2.0 установлен и запущен!"
+echo "  Sing-box Manager v4.2.3 установлен и запущен!"
 echo ""
 echo "  Открой в браузере:  http://$IP:9091"
-echo "  Пароль по умолчанию: admin"
 echo ""
-echo "  Смени пароль сразу после входа!"
+echo "  Смени пароль в Настройках после входа!"
 echo "═══════════════════════════════════════════════════════════"
 echo ""
-echo "Новое в v4.2.0:"
-echo "  ✅ Кнопка «Остановить/Запустить VPN» в шапке"
-echo "  ✅ Кнопка «Проверить правила» в шапке и настройках"
-echo "  ✅ Улучшенный NDMS-хук с retry (5 попыток) — восстанавливает правила"
-echo "     после перестройки netfilter Keenetic"
-echo "  ✅ Fix zombie sing-box через cmd.Wait"
-echo "  ✅ cron-бэкап: state.json + config.d ежедневно (7 дней)"
-echo ""
-echo "Управление:"
-echo "  $INIT_PATH start    — запустить менеджер"
-echo "  $INIT_PATH stop     — остановить"
-echo "  $INIT_PATH restart  — перезапустить"
-echo "  $INIT_PATH status   — статус"
-echo ""
-echo "Проверка TProxy:"
-echo "  iptables -t nat -L SB_TCP -n -v"
-echo "  iptables -t mangle -L SB_UDP_TRANSIT -n -v"
-echo "  ip rule show | grep 100"
+echo "Новое в v4.2.3:"
+echo "  ✅ Автозапуск sing-box после перезагрузки"
+echo "  ✅ Watchdog с grace-period 60 сек при старте"
+echo "  ✅ Watchdog НЕ ставит маркер при падении sing-box"
+echo "  ✅ Все функции v4.2.0 / v4.2.1 / v4.2.2"

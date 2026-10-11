@@ -119,6 +119,11 @@ func Start(addr string) error {
 	fmt.Printf("[web] сервер запущен на http://%s\n", addr)
 
 	// Запускаем watchdog sing-box.
+	// Регистрируем callback: если watchdog уронит sing-box — обновить state.
+	watchdog.SetOnFailure(func() {
+		_ = store.SetVPNEnabled(false)
+	})
+
 	watchdog.Start()
 
 	return http.ListenAndServe(addr, handler)

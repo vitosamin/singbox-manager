@@ -1,15 +1,12 @@
 // Package watchdog следит за состоянием sing-box и iptables.
 //
 // Логика:
-//   - Каждые 15 секунд проверяет Clash API http://127.0.0.1:9090/version.
-//   - Если 3 провала подряд — снимает iptables-правила (интернет идёт напрямую)
-//     и ставит маркер vpn.disabled.
-//   - Если sing-box поднялся — НЕ восстанавливает правила автоматически
-//     (пользователь сам нажмёт Start или Apply).
-//   - Grace-period 10 секунд после Apply — не проверяет, чтобы не снять
-//     правила во время перезапуска sing-box.
-//
-// Watchdog работает в фоне, не блокирует основной поток.
+//   - StartupGrace секунд после старта — не проверяем (даём sing-box подняться).
+//   - GracePeriod секунд после Apply — не проверяем (идёт перезапуск).
+//   - Каждые CheckInterval секунд проверяем Clash API.
+//   - MaxFailures провалов подряд → снимаем iptables-правила.
+//   - НЕ ставим маркер vpn.disabled — это делает только пользователь через Stop.
+//   - Через onFailure callback сообщаем наверх (обновить vpn_enabled в state).
 package watchdog
 
 import (
@@ -19,47 +16,35 @@ import (
 	"time"
 
 	"github.com/shapovalenko/keenetic-singbox-manager/internal/iptables"
-	"github.com/shapovalenko/keenetic-singbox-manager/internal/vpn"
 )
 
 const (
-	// CheckInterval — как часто проверять sing-box.
 	CheckInterval = 15 * time.Second
-
-	// GracePeriod — сколько ждать после Apply, не проверяя sing-box.
-	GracePeriod = 10 * time.Second
-
-	// MaxFailures — сколько провалов подряд до снятия правил.
-	MaxFailures = 3
-
-	// ClashAPIURL — URL Clash API для проверки.
-	ClashAPIURL = "http://127.0.0.1:9090/version"
+	GracePeriod   = 10 * time.Second
+	StartupGrace  = 60 * time.Second
+	MaxFailures   = 3
+	ClashAPIURL   = "http://127.0.0.1:9090/version"
 )
 
 var (
-	// applyInProgress — флаг, что сейчас идёт Apply. Watchdog пропускает проверки.
 	applyInProgress atomic.Bool
-
-	// lastApplyTime — время последнего Apply. Для grace-period.
-	lastApplyTime atomic.Int64
-
-	// running — флаг, что watchdog уже запущен.
-	running atomic.Bool
+	lastApplyTime   atomic.Int64
+	running         atomic.Bool
+	startTime       time.Time
+	onFailure       func()
 )
 
-// SetApplyInProgress — устанавливает флаг «идёт Apply».
-// Вызывается из handleApply перед началом и после завершения.
-func SetApplyInProgress(inProgress bool) {
-	if inProgress {
-		applyInProgress.Store(true)
-		lastApplyTime.Store(time.Now().Unix())
-	} else {
-		applyInProgress.Store(false)
-		lastApplyTime.Store(time.Now().Unix())
-	}
+// SetOnFailure — callback, который вызовется при падении sing-box.
+func SetOnFailure(fn func()) {
+	onFailure = fn
 }
 
-// isApplyGrace — true, если мы в grace-period после Apply.
+// SetApplyInProgress — устанавливает флаг «идёт Apply».
+func SetApplyInProgress(inProgress bool) {
+	applyInProgress.Store(inProgress)
+	lastApplyTime.Store(time.Now().Unix())
+}
+
 func isApplyGrace() bool {
 	if applyInProgress.Load() {
 		return true
@@ -71,16 +56,21 @@ func isApplyGrace() bool {
 	return time.Since(time.Unix(last, 0)) < GracePeriod
 }
 
-// Start — запускает watchdog в фоне (горутина).
-// Идемпотентно: если уже запущен — ничего не делает.
+func isStartupGrace() bool {
+	return time.Since(startTime) < StartupGrace
+}
+
+// Start — запускает watchdog в фоне.
 func Start() {
 	if !running.CompareAndSwap(false, true) {
 		fmt.Println("[watchdog] уже запущен")
 		return
 	}
 
-	fmt.Printf("[watchdog] запущен (интервал %v, grace %v, макс. провалов %d)\n",
-		CheckInterval, GracePeriod, MaxFailures)
+	startTime = time.Now()
+
+	fmt.Printf("[watchdog] запущен (интервал %v, grace %v, startup-grace %v, макс. провалов %d)\n",
+		CheckInterval, GracePeriod, StartupGrace, MaxFailures)
 
 	go func() {
 		failures := 0
@@ -88,14 +78,11 @@ func Start() {
 		defer ticker.Stop()
 
 		for range ticker.C {
-			// Пропускаем проверку в grace-period после Apply.
-			if isApplyGrace() {
+			if isStartupGrace() {
 				failures = 0
 				continue
 			}
-
-			// Если VPN выключен пользователем — не проверяем.
-			if vpn.IsDisabled() {
+			if isApplyGrace() {
 				failures = 0
 				continue
 			}
@@ -116,7 +103,6 @@ func Start() {
 	}()
 }
 
-// checkSingBox — true, если Clash API отвечает.
 func checkSingBox() bool {
 	client := &http.Client{Timeout: 3 * time.Second}
 	resp, err := client.Get(ClashAPIURL)
@@ -127,18 +113,17 @@ func checkSingBox() bool {
 	return resp.StatusCode == http.StatusOK
 }
 
-// handleFailure — снимает iptables-правила (интернет идёт напрямую).
-// Ставит маркер vpn.disabled, чтобы NDMS-хук не восстановил правила.
+// handleFailure — снимает iptables-правила.
+// НЕ ставит маркер vpn.disabled — это делает только Stop из UI.
 func handleFailure() {
 	fmt.Println("[watchdog] sing-box упал — снимаем iptables-правила")
 
-	// Ставим маркер, чтобы NDMS-хук и cron не восстановили.
-	_ = vpn.ForceDisableMarker()
-
-	// Снимаем правила.
 	if err := iptables.Cleanup(); err != nil {
 		fmt.Printf("[watchdog] ошибка снятия правил: %v\n", err)
-		return
+	}
+
+	if onFailure != nil {
+		onFailure()
 	}
 
 	fmt.Println("[watchdog] правила сняты, интернет идёт напрямую")
