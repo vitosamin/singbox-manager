@@ -2,6 +2,7 @@ package singbox
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -15,8 +16,8 @@ import (
 )
 
 const (
-	// Version — версия бинарника Sing-box (AWG-сборка).
-	Version           = "1.15.0-alpha.10-awgm.31"
+	// Version — версия официального Sing-box (SagerNet).
+	Version           = "1.14.2"
 	DefaultInstallDir = "/opt/etc/sing-box"
 )
 
@@ -65,31 +66,73 @@ func singBoxArgs(subcommand ...string) []string {
 	return append([]string{bin}, subcommand...)
 }
 
+// ResolveServerIPs — превращает домены VLESS-серверов в IP-адреса.
+// Нужно для исключения из iptables (иначе петля: сервер → proxy → сервер).
+func ResolveServerIPs(servers []string) []string {
+	var result []string
+	seen := make(map[string]bool)
+
+	for _, s := range servers {
+		if s == "" {
+			continue
+		}
+
+		if net.ParseIP(s) != nil {
+			if !seen[s] {
+				result = append(result, s)
+				seen[s] = true
+			}
+			continue
+		}
+
+		ips, err := net.LookupHost(s)
+		if err != nil {
+			fmt.Printf("[singbox] предупреждение: не могу отрезолвить %s: %v\n", s, err)
+			continue
+		}
+		for _, ip := range ips {
+			if !seen[ip] {
+				result = append(result, ip)
+				seen[ip] = true
+			}
+		}
+	}
+	return result
+}
+
 // EnsureInstalled — проверяет, что бинарник Sing-box установлен.
-// В v3.0.0 бинарник скачивается отдельно (из нашего GitHub Release).
-// Здесь — только проверка.
+// Если нет — скачивает официальный 1.14.2 от SagerNet.
 func EnsureInstalled() error {
 	if _, err := os.Stat(BinaryPath()); err == nil {
 		fmt.Println("[singbox] бинарник найден:", BinaryPath())
 		return nil
 	}
-	// Если нет — пытаемся скачать из нашего релиза
-	return downloadFromRelease()
+	return downloadFromOfficial()
 }
 
-// downloadFromRelease — скачивает бинарник AWG-сборки из нашего GitHub Release.
-func downloadFromRelease() error {
+// downloadFromOfficial — скачивает официальный sing-box 1.14.2 от SagerNet.
+func downloadFromOfficial() error {
+	arch := "arm64"
+	if runtime.GOARCH == "mips" || runtime.GOARCH == "mipsle" {
+		arch = "mipsle"
+	}
 	url := fmt.Sprintf(
-		"https://github.com/vitosamin/singbox-manager/releases/download/sing-box-v%s/singbox-%s-aarch64-3.10",
-		Version, Version,
+		"https://github.com/SagerNet/sing-box/releases/download/v%s/sing-box-%s-linux-%s.tar.gz",
+		Version, Version, arch,
 	)
-	fmt.Printf("[singbox] скачиваем: %s\n", url)
+	fmt.Printf("[singbox] скачиваем официальный: %s\n", url)
 
 	if err := os.MkdirAll(InstallDir(), 0755); err != nil {
 		return fmt.Errorf("mkdir %s: %w", InstallDir(), err)
 	}
 
-	tmpPath := InstallDir() + "/sing-box.new"
+	tmpFile, err := os.CreateTemp("", "sing-box-*.tar.gz")
+	if err != nil {
+		return fmt.Errorf("CreateTemp: %w", err)
+	}
+	defer os.Remove(tmpFile.Name())
+	defer tmpFile.Close()
+
 	client := &http.Client{Timeout: 5 * time.Minute}
 	resp, err := client.Get(url)
 	if err != nil {
@@ -100,22 +143,23 @@ func downloadFromRelease() error {
 		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, url)
 	}
 
-	out, err := os.Create(tmpPath)
-	if err != nil {
-		return fmt.Errorf("create %s: %w", tmpPath, err)
+	if _, err := tmpFile.ReadFrom(resp.Body); err != nil {
+		return fmt.Errorf("io.Copy: %w", err)
 	}
-	if _, err := out.ReadFrom(resp.Body); err != nil {
-		out.Close()
-		os.Remove(tmpPath)
-		return fmt.Errorf("download: %w", err)
+	if _, err := tmpFile.Seek(0, 0); err != nil {
+		return fmt.Errorf("Seek: %w", err)
 	}
-	out.Close()
 
-	if err := os.Chmod(tmpPath, 0755); err != nil {
-		return fmt.Errorf("chmod: %w", err)
+	// Распаковка tar.gz
+	if err := extractTarGz(tmpFile, InstallDir()); err != nil {
+		return fmt.Errorf("extractTarGz: %w", err)
 	}
-	if err := os.Rename(tmpPath, BinaryPath()); err != nil {
-		return fmt.Errorf("rename: %w", err)
+
+	if _, err := os.Stat(BinaryPath()); err != nil {
+		return fmt.Errorf("бинарник не появился: %w", err)
+	}
+	if err := os.Chmod(BinaryPath(), 0755); err != nil {
+		return fmt.Errorf("chmod: %w", err)
 	}
 
 	fmt.Println("[singbox] бинарник установлен:", BinaryPath())
@@ -132,9 +176,9 @@ func (ringWriter) Write(p []byte) (int, error) {
 }
 
 // Restart — перезапускает Sing-box с `-C config.d`.
-// serverHosts — не используется в v3.0.0 (оставлен для совместимости API).
+// serverHosts — список доменов/адресов серверов (используется только для логов).
 func Restart(serverHosts []string) error {
-	_ = serverHosts // не используется в v3
+	_ = serverHosts
 
 	killOld()
 
@@ -208,7 +252,6 @@ func killOld() {
 			}
 		}
 	}
-	// Убиваем по имени (включая запущенные через ld-linux)
 	exec.Command("killall", "sing-box").Run()
 	exec.Command("sh", "-c",
 		"ps -w | grep -E 'ld-linux.*sing-box' | grep -v grep | awk '{print $1}' | xargs -r kill -9").

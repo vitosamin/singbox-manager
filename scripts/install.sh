@@ -1,5 +1,5 @@
 #!/bin/sh
-# Установщик Sing-box Manager v3.0.0 для Keenetic (Entware).
+# Установщик Sing-box Manager v4.0.0 для Keenetic (Entware).
 # Запуск:
 #   wget -qO- https://github.com/vitosamin/singbox-manager/raw/main/scripts/install.sh | sh
 
@@ -12,6 +12,7 @@ INIT_PATH="/opt/etc/init.d/S99singbox-manager"
 DATA_DIR="/opt/etc/sing-box"
 CONFIG_D="${DATA_DIR}/config.d"
 TMP_DIR="/tmp"
+NETFILTER_HOOK="/opt/etc/ndm/netfilter.d/50-singbox.sh"
 
 # --- Проверки ---
 if [ ! -d /opt/etc ]; then
@@ -21,7 +22,25 @@ fi
 
 if ! command -v ndmc >/dev/null 2>&1; then
     echo "ПРЕДУПРЕЖДЕНИЕ: ndmc не найден. Прокси в Keenetic не будут созданы автоматически."
-    echo "             Установка продолжится, но маршрутизация не заработает."
+fi
+
+# --- Проверка модулей ядра для TProxy ---
+KERNEL=$(uname -r)
+HAS_TPROXY=0
+for p in "/lib/modules/$KERNEL/xt_TPROXY.ko" "/lib/system-modules/xt_TPROXY.ko" \
+         "/lib/modules/$KERNEL/xt_socket.ko" "/lib/system-modules/xt_socket.ko"; do
+    [ -f "$p" ] && HAS_TPROXY=$((HAS_TPROXY+1))
+done
+
+if [ "$HAS_TPROXY" -lt 2 ]; then
+    echo ""
+    echo "⚠️  ВНИМАНИЕ: модули xt_TPROXY / xt_socket не найдены!"
+    echo "   Установи компонент «Модули ядра для Netfilter»:"
+    echo "   Веб-админка → Общие настройки → Изменить набор компонентов →"
+    echo "   Сетевые функции → Модули ядра для Netfilter"
+    echo ""
+    echo "   Без них TProxy (UDP) не заработает. TCP через REDIRECT будет работать."
+    echo ""
 fi
 
 # --- Определение архитектуры ---
@@ -35,7 +54,7 @@ case "$ARCH" in
         ;;
 esac
 
-echo "=== Sing-box Manager v3.0.0 Installer ==="
+echo "=== Sing-box Manager v4.0.0 Installer ==="
 echo "Архитектура: $ARCH -> $MANAGER_BIN"
 
 # --- Остановка старой версии ---
@@ -44,10 +63,11 @@ if [ -x "$INIT_PATH" ]; then
     "$INIT_PATH" stop 2>/dev/null || true
 fi
 killall singbox-manager 2>/dev/null || true
+killall sing-box 2>/dev/null || true
 
-# --- Убираем старые iptables-скрипты (если остались от v2) ---
+# --- Убираем старые iptables-скрипты (если остались от v2/v3) ---
 rm -f /opt/etc/init.d/S55singbox-tproxy.sh
-rm -f /opt/etc/ndm/netfilter.d/50-singbox.sh
+rm -f "$NETFILTER_HOOK"
 
 # --- Каталоги ---
 mkdir -p "$DATA_DIR"
@@ -99,27 +119,95 @@ if [ ! -f "$SINGBOX_BIN_PATH" ]; then
         exit 1
     fi
 
-    # Распаковываем
     tar xzf sing-box.tar.gz
     cp sing-box-1.14.2-linux-arm64/sing-box "$SINGBOX_BIN_PATH"
     cp sing-box-1.14.2-linux-arm64/libcronet.so "$DATA_DIR/" 2>/dev/null || true
     chmod +x "$SINGBOX_BIN_PATH"
 
-    # Чистим
     rm -rf sing-box.tar.gz sing-box-1.14.2-linux-arm64
-
     echo "    OK: $SINGBOX_BIN_PATH"
 else
     echo ""
     echo "==> Sing-box уже установлен: $SINGBOX_BIN_PATH"
 fi
 
+# --- Netfilter-хук для TProxy ---
+echo ""
+echo "==> Устанавливаем netfilter-хук: $NETFILTER_HOOK"
+mkdir -p "$(dirname "$NETFILTER_HOOK")"
+
+cat > "$NETFILTER_HOOK" << 'HOOK_EOF'
+#!/bin/sh
+# Netfilter-хук для sing-box (TProxy + REDIRECT).
+# Keenetic вызывает его при каждом применении правил netfilter.
+[ "$type" != "iptables" ] && exit 0
+
+# Определяем LAN-интерфейс
+LAN_IFACE="br0"
+LAN_NET="192.168.35.0/24"
+WG_NET="172.16.6.0/24"
+VPS_IPS="91.132.224.49"
+
+# Цепочки
+CHAIN_TCP="SB_TCP"
+CHAIN_UDP="SB_UDP"
+
+if [ "$table" = "nat" ]; then
+    # TCP → REDIRECT
+    iptables -t nat -N $CHAIN_TCP 2>/dev/null
+    iptables -t nat -F $CHAIN_TCP 2>/dev/null
+
+    # Исключения (RETURN перед REDIRECT)
+    for ip in $VPS_IPS; do
+        iptables -t nat -A $CHAIN_TCP -d "$ip" -j RETURN
+    done
+    for net in "$LAN_NET" "$WG_NET" 127.0.0.0/8 224.0.0.0/4 255.255.255.255/32; do
+        iptables -t nat -A $CHAIN_TCP -d "$net" -j RETURN
+    done
+    iptables -t nat -A $CHAIN_TCP -p tcp --dport 53 -j RETURN
+
+    # Всё остальное → REDIRECT
+    iptables -t nat -A $CHAIN_TCP -p tcp -j REDIRECT --to-ports 1082
+
+    # Хук в PREROUTING
+    iptables -t nat -C PREROUTING -i $LAN_IFACE -p tcp -j $CHAIN_TCP 2>/dev/null || \
+    iptables -t nat -A PREROUTING -i $LAN_IFACE -p tcp -j $CHAIN_TCP
+fi
+
+if [ "$table" = "mangle" ]; then
+    # UDP → TPROXY
+    iptables -t mangle -N $CHAIN_UDP 2>/dev/null
+    iptables -t mangle -F $CHAIN_UDP 2>/dev/null
+
+    for ip in $VPS_IPS; do
+        iptables -t mangle -A $CHAIN_UDP -d "$ip" -j RETURN
+    done
+    for net in "$LAN_NET" "$WG_NET" 127.0.0.0/8 224.0.0.0/4; do
+        iptables -t mangle -A $CHAIN_UDP -d "$net" -j RETURN
+    done
+    iptables -t mangle -A $CHAIN_UDP -p udp --dport 53 -j RETURN
+
+    iptables -t mangle -A $CHAIN_UDP -p udp -j TPROXY --on-port 1081 --tproxy-mark 0x1
+
+    iptables -t mangle -C PREROUTING -i $LAN_IFACE -p udp -j $CHAIN_UDP 2>/dev/null || \
+    iptables -t mangle -A PREROUTING -i $LAN_IFACE -p udp -j $CHAIN_UDP
+
+    # ip rule + ip route для TProxy
+    ip rule add fwmark 0x1 table 100 2>/dev/null
+    ip route add local default dev lo table 100 2>/dev/null
+fi
+
+exit 0
+HOOK_EOF
+
+chmod +x "$NETFILTER_HOOK"
+echo "    OK: $NETFILTER_HOOK"
+
 # --- Init-скрипт менеджера ---
 echo ""
 echo "==> Устанавливаем init-скрипт: $INIT_PATH"
 cat > "$INIT_PATH" << 'INIT_EOF'
 #!/bin/sh
-# Init-скрипт для Sing-box Manager (Keenetic, Entware).
 BIN=/opt/bin/singbox-manager
 LOGFILE=/opt/var/log/singbox-manager.log
 ADDR=":9091"
@@ -146,7 +234,15 @@ case "$1" in
         echo "Остановка..."
         killall singbox-manager 2>/dev/null
         killall sing-box 2>/dev/null
-        rm -f /opt/var/run/singbox-manager.pid
+        # Убираем наши iptables-правила
+        iptables -t nat -D PREROUTING -i br0 -p tcp -j SB_TCP 2>/dev/null
+        iptables -t mangle -D PREROUTING -i br0 -p udp -j SB_UDP 2>/dev/null
+        iptables -t nat -F SB_TCP 2>/dev/null
+        iptables -t mangle -F SB_UDP 2>/dev/null
+        iptables -t nat -X SB_TCP 2>/dev/null
+        iptables -t mangle -X SB_UDP 2>/dev/null
+        ip rule del fwmark 0x1 table 100 2>/dev/null
+        ip route del local default dev lo table 100 2>/dev/null
         echo "OK"
         ;;
     restart)
@@ -181,7 +277,7 @@ echo "==> Запускаем менеджер..."
 IP=$(ip addr show br0 2>/dev/null | grep "inet " | awk '{print $2}' | cut -d/ -f1 || echo "IP-роутера")
 echo ""
 echo "═══════════════════════════════════════════════════════════"
-echo "  Sing-box Manager v3.0.0 установлен и запущен!"
+echo "  Sing-box Manager v4.0.0 установлен и запущен!"
 echo ""
 echo "  Открой в браузере:  http://$IP:9091"
 echo "  Пароль по умолчанию: admin"
@@ -195,14 +291,17 @@ echo "  2. Включи списки обхода (YouTube, Telegram, ...)"
 echo "  3. Нажми «Применить»"
 echo ""
 echo "  При «Применить» менеджер:"
-echo "    - сгенерирует config.d/ для Sing-box"
-echo "    - создаст прокси в Keenetic через ndmc"
+echo "    - сгенерирует config.d/ для Sing-box (TProxy + REDIRECT)"
+echo "    - установит iptables-правила (через netfilter-хук)"
 echo "    - запустит Sing-box"
-echo ""
-echo "  Далее настрой маршрутизацию в HR Neo / Keenetic policy."
 echo ""
 echo "Управление:"
 echo "  $INIT_PATH start    — запустить менеджер"
 echo "  $INIT_PATH stop     — остановить"
 echo "  $INIT_PATH restart  — перезапустить"
 echo "  $INIT_PATH status   — статус"
+echo ""
+echo "Проверка TProxy:"
+echo "  iptables -t nat -L SB_TCP -n -v"
+echo "  iptables -t mangle -L SB_UDP -n -v"
+echo "  ip rule show | grep 100"

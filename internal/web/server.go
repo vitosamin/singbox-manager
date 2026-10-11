@@ -12,8 +12,8 @@ import (
 	"github.com/shapovalenko/keenetic-singbox-manager/internal/auth"
 	"github.com/shapovalenko/keenetic-singbox-manager/internal/config"
 	"github.com/shapovalenko/keenetic-singbox-manager/internal/failover"
+	"github.com/shapovalenko/keenetic-singbox-manager/internal/iptables"
 	"github.com/shapovalenko/keenetic-singbox-manager/internal/monitor"
-	"github.com/shapovalenko/keenetic-singbox-manager/internal/ndmc"
 	"github.com/shapovalenko/keenetic-singbox-manager/internal/ruleset"
 	"github.com/shapovalenko/keenetic-singbox-manager/internal/singbox"
 	"github.com/shapovalenko/keenetic-singbox-manager/internal/state"
@@ -404,7 +404,6 @@ func handleLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleRestart — перезапуск Sing-box без пересборки конфига.
-// В v3.0.0 serverHosts не нужен (нет iptables).
 func handleRestart(w http.ResponseWriter, r *http.Request) {
 	if err := singbox.Restart(nil); err != nil {
 		writeJSON(w, map[string]interface{}{"error": err.Error()})
@@ -441,8 +440,8 @@ func handleImport(w http.ResponseWriter, r *http.Request) {
 
 // handleApply — ГЛАВНОЕ:
 //   1. Скачивает .srs
-//   2. Генерирует config.d/
-//   3. Создаёт прокси в Keenetic через ndmc
+//   2. Генерирует config.d/ (TProxy + REDIRECT + mixed)
+//   3. Резолвит IP серверов и ставит iptables-правила (TProxy + REDIRECT)
 //   4. Запускает Sing-box с -C config.d
 func handleApply(w http.ResponseWriter, r *http.Request) {
 	st := store.Snapshot()
@@ -476,38 +475,25 @@ func handleApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 3. Создаём прокси в Keenetic через ndmc
-	if ndmc.IsAvailable() {
-		fmt.Println("[web] ndmc доступен — создаём прокси в Keenetic...")
-
-		// Убираем старые прокси с нашим префиксом
-		if err := ndmc.CleanupAllProxies(); err != nil {
-			fmt.Printf("[web] предупреждение: cleanup ndmc: %v\n", err)
+	// 3. Резолвим IP VLESS-серверов (чтобы исключить их из перехвата — иначе петля)
+	serverHosts := make([]string, 0, len(st.Proxies))
+	for _, p := range st.Proxies {
+		if p.Server != "" {
+			serverHosts = append(serverHosts, p.Server)
 		}
+	}
+	vlessIPs := singbox.ResolveServerIPs(serverHosts)
+	fmt.Printf("[web] IP VLESS-серверов: %v\n", vlessIPs)
 
-		// Собираем имена серверов
-		serverNames := make([]string, 0, len(st.Proxies))
-		for _, p := range st.Proxies {
-			name := p.Server
-			if name == "" {
-				name = p.Tag
-			}
-			serverNames = append(serverNames, name)
-		}
-
-		// Создаём новые
-		configs := ndmc.BuildConfigs(serverNames)
-		if err := ndmc.SetupProxies(configs); err != nil {
-			writeJSON(w, map[string]interface{}{"error": fmt.Sprintf("ndmc: %v", err)})
-			return
-		}
-	} else {
-		fmt.Println("[web] предупреждение: ndmc недоступен — прокси не созданы")
+	// 4. Ставим iptables-правила (TProxy + REDIRECT)
+	if err := iptables.Setup(vlessIPs); err != nil {
+		writeJSON(w, map[string]interface{}{"error": fmt.Sprintf("iptables: %v", err)})
+		return
 	}
 
-	// 4. Запускаем Sing-box с -C config.d
+	// 5. Запускаем Sing-box с -C config.d
 	if st.Settings.RestartOnApply {
-		if err := singbox.Restart(nil); err != nil {
+		if err := singbox.Restart(serverHosts); err != nil {
 			writeJSON(w, map[string]interface{}{"error": fmt.Sprintf("restart: %v", err)})
 			return
 		}

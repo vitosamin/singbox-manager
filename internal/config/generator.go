@@ -13,6 +13,12 @@ import (
 // BasePort — базовый порт первого mixed-inbound. Каждый сервер = 1080, 1081, ...
 const BasePort = 1080
 
+// TProxyPort — порт TProxy-inbound (UDP+TCP).
+const TProxyPort = 1081
+
+// RedirectPort — порт REDIRECT-inbound (TCP, запасной).
+const RedirectPort = 1082
+
 // ConfigDir — каталог с фрагментами конфига для `sing-box -C`.
 const ConfigDirName = "config.d"
 
@@ -22,8 +28,8 @@ func ConfigDir(installDir string) string {
 }
 
 // GenerateV3 — новая генерация: создаёт config.d/ с фрагментами.
-// Каждый сервер получает свой mixed-inbound на BasePort+i.
-// Route rule: inbound "proxy-N-in" → outbound "proxy-N".
+// Каждый сервер получает свой outbound.
+// Inbounds: tproxy-in (1081), redirect-in (1082), mixed-in (1080).
 func GenerateV3(
 	enabledIDs []string,
 	customRules []ruleset.CustomRule,
@@ -47,12 +53,12 @@ func GenerateV3(
 		return fmt.Errorf("mkdir config.d: %w", err)
 	}
 
-	// 00-base.json — log, clash_api, direct
+	// 00-base.json — log, clash_api, direct, block
 	if err := writeJSONFile(filepath.Join(cfgDir, "00-base.json"), buildBase()); err != nil {
 		return fmt.Errorf("00-base: %w", err)
 	}
 
-	// 10-tunnels.json — N mixed-inbound + N VLESS-outbound + route rules
+	// 10-tunnels.json — TProxy + REDIRECT + mixed inbounds + N outbounds + route rules
 	tunnels, err := buildTunnels(proxies)
 	if err != nil {
 		return fmt.Errorf("10-tunnels: %w", err)
@@ -72,8 +78,8 @@ func GenerateV3(
 	}
 
 	fmt.Printf("[config] записан %s\n", cfgDir)
-	fmt.Printf("  серверов: %d, inbound-портов: %d-%d\n",
-		len(proxies), BasePort, BasePort+len(proxies)-1)
+	fmt.Printf("  серверов: %d, tproxy=%d, redirect=%d, mixed=%d\n",
+		len(proxies), TProxyPort, RedirectPort, BasePort)
 	return nil
 }
 
@@ -88,9 +94,10 @@ func buildBase() map[string]interface{} {
 			"clash_api": map[string]interface{}{
 				"external_controller": "127.0.0.1:9090",
 			},
+			// На Keenetic кэш вызывает "initialize cache-file: timeout",
+			// поэтому отключаем его.
 			"cache_file": map[string]interface{}{
-				"enabled": true,
-				"path":    "/opt/etc/sing-box/cache.db",
+				"enabled": false,
 			},
 		},
 		"outbounds": []map[string]interface{}{
@@ -100,39 +107,55 @@ func buildBase() map[string]interface{} {
 	}
 }
 
-// buildTunnels — N mixed-inbound + N VLESS + route rules.
+// buildTunnels — TProxy + REDIRECT + mixed inbounds + N outbounds + route rules.
+//
+// Схема:
+//   - tproxy-in  :1081 — перехват TCP+UDP (основной путь)
+//   - redirect-in:1082 — перехват TCP (запасной, если TProxy не работает)
+//   - mixed-in   :1080 — SOCKS5/HTTP для ndmc-прокси (Keenetic UI)
+//
+// Маршрутизация: все три inbound → первый сервер (default).
+// В будущем: правила по inbound/домену → разные серверы.
 func buildTunnels(proxies []subscription.Proxy) (map[string]interface{}, error) {
-	inbounds := make([]map[string]interface{}, 0, len(proxies))
-	outbounds := make([]map[string]interface{}, 0, len(proxies))
-	rules := make([]map[string]interface{}, 0, len(proxies))
-
-	for i, p := range proxies {
-		port := BasePort + i
-		inTag := fmt.Sprintf("proxy-%d-in", i+1)
-		outTag := p.Tag
-
-		// inbound
-		inbounds = append(inbounds, map[string]interface{}{
+	inbounds := []map[string]interface{}{
+		{
+			"type":        "tproxy",
+			"tag":         "tproxy-in",
+			"listen":      "0.0.0.0",
+			"listen_port": TProxyPort,
+			"network":     []string{"tcp", "udp"},
+		},
+		{
+			"type":        "redirect",
+			"tag":         "redirect-in",
+			"listen":      "0.0.0.0",
+			"listen_port": RedirectPort,
+		},
+		{
 			"type":        "mixed",
-			"tag":         inTag,
+			"tag":         "mixed-in",
 			"listen":      "127.0.0.1",
-			"listen_port": port,
-		})
+			"listen_port": BasePort,
+		},
+	}
 
-		// outbound
+	outbounds := make([]map[string]interface{}, 0, len(proxies))
+	for _, p := range proxies {
 		ob := proxyToOutbound(p)
 		if ob == nil {
 			return nil, fmt.Errorf("неподдерживаемый протокол: %s", p.Protocol)
 		}
-		// Принудительно перезаписываем tag на p.Tag
-		ob["tag"] = outTag
+		ob["tag"] = p.Tag
 		outbounds = append(outbounds, ob)
+	}
 
-		// route rule: inbound → outbound
-		rules = append(rules, map[string]interface{}{
-			"inbound":  []string{inTag},
-			"outbound": outTag,
-		})
+	// Первый сервер — default для TProxy/REDIRECT/mixed.
+	defaultTag := proxies[0].Tag
+	rules := []map[string]interface{}{
+		{
+			"inbound":  []string{"tproxy-in", "redirect-in", "mixed-in"},
+			"outbound": defaultTag,
+		},
 	}
 
 	return map[string]interface{}{
@@ -173,9 +196,6 @@ func buildDNSRewrites() map[string]interface{} {
 
 // buildDefaults — стратегия, resolver.
 func buildDefaults(dnsCfg DNSConfig) map[string]interface{} {
-	// ВАЖНО: всегда используем "dns-bootstrap" — он гарантированно есть
-	// в config.d. dnsCfg.DefaultServer из state.json может содержать старые
-	// теги (dns-router, dns-remote), которые в v3.0.0 больше не создаются.
 	_ = dnsCfg
 	defaultResolver := "dns-bootstrap"
 	return map[string]interface{}{
@@ -209,9 +229,7 @@ func writeJSONFile(path string, v interface{}) error {
 
 // -------------------- старые функции (для совместимости) --------------------
 
-// Generate — старый API, оставлен для совместимости с handleApply v2.
-// В v3.0.0 handleApply вызывает GenerateV3.
-// Если installDir передан как путь к файлу — конвертируем.
+// Generate — старый API, оставлен для совместимости.
 func Generate(
 	enabledIDs []string,
 	customRules []ruleset.CustomRule,
@@ -222,8 +240,6 @@ func Generate(
 	devices []DeviceRule,
 	outPath string,
 ) error {
-	// outPath в v2 = /opt/etc/sing-box/config.json
-	// installDir в v3 = /opt/etc/sing-box
 	installDir := filepath.Dir(outPath)
 	return GenerateV3(
 		enabledIDs, customRules, customSRS,
@@ -277,7 +293,6 @@ func vlessOutbound(p subscription.Proxy) map[string]interface{} {
 		}
 		ob["tls"] = tls
 	}
-	// flow (XTLS-Vision) — если есть в ссылке, передаём
 	if p.Flow != "" {
 		ob["flow"] = p.Flow
 	}

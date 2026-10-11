@@ -1,108 +1,51 @@
 # Changelog
 
-## [3.1.0] — 2026-10-10
+## [4.0.0] - 2026-10-11
 
-**MINOR:** переход на официальный Sing-box 1.14.2. Оба Reality работают.
+### Added
+- **TProxy + REDIRECT** — возвращён рабочий механизм прозрачного проксирования
+  - TCP → `nat PREROUTING` → REDIRECT `:1082`
+  - UDP → `mangle PREROUTING` → TPROXY `:1081`
+- **`internal/iptables/`** — управление iptables-правилами (цепочки `SB_TCP`, `SB_UDP_TRANSIT`)
+- **`internal/firewall/`** — удалён (дублировал старый пакет)
+- **`internal/singbox/extract.go`** — распаковка `tar.gz` с официального бинарника
+- **`WriteNDMSHook()`** — KeeneticOS восстанавливает правила после перестройки netfilter
+- **`WriteTProxyInit()`** — init-скрипт `S55singbox-tproxy.sh` для автозапуска
 
-### Изменено
-- **AWG-сборка → официальный Sing-box 1.14.2** (SagerNet).
-  AWG-бинарник давал segfault на ядре 4.9.
-- **`install.sh`** — скачивает `.tar.gz` из SagerNet, распаковывает.
-- **`buildDefaults()`** — всегда использует `dns-bootstrap`, игнорирует
-  старое значение `dnsCfg.DefaultServer` из state.json.
+### Changed
+- **Sing-box 1.14.2** (официальный, SagerNet) вместо AWG-сборки `1.15.0-alpha.10-awgm.31`
+- **`handleApply`** — вместо `ndmc.SetupProxies()` (Proxy10, Proxy11) теперь `iptables.Setup(vlessIPs)`
+- **`handleApply`** — резолвит IP VLESS-серверов через `singbox.ResolveServerIPs()` для исключения из перехвата
+- **`internal/config/generator.go`** — генерирует `tproxy-in` (1081), `redirect-in` (1082), `mixed-in` (1080) вместо N `mixed-inbound`
+- **`scripts/install.sh`** — устанавливает netfilter-хук `50-singbox.sh`, проверяет модули `xt_TPROXY` и `xt_socket`
+- **`VERSION`** — `4.0.0`
 
-### Исправлено
-- **Ошибка `default domain resolver not found: dns-router`** —
-  в `99-defaults.json` подставлялся старый тег из state.json.
+### Removed
+- **TUN-inbound** — не работает на Keenetic (конфликты с NDMS)
+- **`ndmc.SetupProxies()`** в `handleApply` — больше не создаёт Proxy10, Proxy11
+- **AWG Manager зависимость** — не требует AWG-сборку
 
-### Проверено
-- **2 Reality-сервера работают одновременно** (flow: xtls-rprx-vision).
-- Clash API отвечает, delay 100-130 мс на оба сервера.
-- Прокси `Proxy10`, `Proxy11` создаются в Keenetic через `ndmc`.
+### Fixed
+- **Трафик не шёл через VPN** — теперь TProxy перехватывает TCP+UDP на уровне iptables
+- **«Отправлено растёт, принято — 0»** — исправлено правильной схемой TProxy + REDIRECT
 
-## [3.0.0] — 2026-10-10
+## [3.1.0] - 2026-10-09
 
-## [3.1.0] — 2026-10-10
+### Added
+- Официальный Sing-box 1.14.2 вместо AWG-сборки
+- DNS-фикс: убран `detour:direct` (падал на 1.14)
 
-**MINOR:** переход на официальный Sing-box 1.14.2. Оба Reality работают.
+## [3.0.1] - 2026-10-09
 
-### Изменено
-- **AWG-сборка → официальный Sing-box 1.14.2** (SagerNet).
-  AWG-бинарник давал segfault на ядре 4.9.
-- **`install.sh`** — скачивает `.tar.gz` из SagerNet, распаковывает.
-- **`buildDefaults()`** — всегда использует `dns-bootstrap`, игнорирует
-  старое значение `dnsCfg.DefaultServer` из state.json.
+### Fixed
+- `ndmc`: префикс `Proxy` + `BaseIndex=10` (не конфликтует с AWG Manager)
 
-### Исправлено
-- **Ошибка `default domain resolver not found: dns-router`** —
-  в `99-defaults.json` подставлялся старый тег из state.json.
+## [3.0.0] - 2026-10-09
 
-### Проверено
-- **2 Reality-сервера работают одновременно** (flow: xtls-rprx-vision).
-- Clash API отвечает, delay 100-130 мс на оба сервера.
-- Прокси `Proxy10`, `Proxy11` создаются в Keenetic через `ndmc`.
+### Added
+- Keenetic native proxy через `ndmc` (Proxy10, Proxy11, ...)
 
-## [3.0.0] — 2026-10-10
+## [2.0.0] - 2026-10-08
 
-## [3.0.0] — 2026-10-10
-
-**MAJOR:** переход на Keenetic native proxy через `ndmc`. Убран iptables.
-
-### Изменено
-- **Убран iptables** (TProxy + REDIRECT) — заменён на `ndmc` (Keenetic NDMS CLI).
-- **Убран NDMS-хук** `50-singbox.sh` — больше не нужен.
-- **Убран `S55singbox-tproxy.sh`** — больше не нужен.
-- **`config.json` → `config.d/`** — фрагментированный конфиг Sing-box.
-- **`iptables/manager.go` → `ndmc/manager.go`** — новый модуль.
-- **Запуск Sing-box:** `-c config.json` → `-C config.d`.
-- **Множество серверов:** каждый сервер = свой mixed-inbound (1080, 1081, ...).
-- **Bundled Sing-box:** AWG-сборка `1.15.0-alpha.10-awgm.31` с поддержкой `flow: xtls-rprx-vision`.
-
-### Добавлено
-- **`ndmc.SetupProxies()`** — создание прокси в Keenetic.
-- **`ndmc.CleanupAllProxies()`** — удаление прокси.
-- **6+ Reality-серверов одновременно** (устранён баг с 2 Reality).
-- **Совместимость с HR Neo** и Keenetic policy routing.
-- **Скачивание Sing-box** из нашего GitHub Release.
-
-### Удалено
-- `internal/iptables/` — целиком.
-- iptables TProxy + REDIRECT.
-- NDMS-хук.
-- `S55singbox-tproxy.sh`.
-- `ResolveServerIPs()` (больше не нужна).
-
-### Известные ограничения
-- Требуется `ndmc` (есть в KeeneticOS из коробки).
-- Требуется ручная настройка HR Neo / Keenetic policy для маршрутизации.
-
-## [2.0.0] — 2026-10-10
-
-Стабильная версия. TProxy + REDIRECT (iptables).
-
-### Изменено
-- TUN заменён на TProxy + REDIRECT — работает на Keenetic.
-- TCP через REDIRECT (порт 1082), UDP через TPROXY (порт 1081).
-- Правильный NDMS-хук с проверкой `$table` и защитой от гонки.
-- Циклическое удаление `ip rule` (исправлены дубликаты).
-- Убран `flow: xtls-rprx-vision` — не работает на кастомной сборке.
-- WriteInitScripts() вызывается ДО WriteNDMSHook().
-
-## [0.1.0] — 2026-10-09
-
-Первая публичная BETA.
-
-### Добавлено
-- Веб-интерфейс на Go + JS.
-- VLESS, Trojan, Hysteria2, Shadowsocks.
-- Раздельная маршрутизация (домены + CIDR).
-- Готовые списки itdoginfo.
-- Свои правила и свои .srs.
-- Приоритеты и failover.
-- Ручные группы.
-- Маршрутизация по IP.
-- DNS-серверы.
-- Мониторинг задержек.
-- Журнал в оперативке.
-- Пароль на UI.
-- Экспорт/импорт state.json.
+### Added
+- TProxy + REDIRECT, стабильная версия
