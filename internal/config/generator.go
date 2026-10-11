@@ -27,9 +27,10 @@ func ConfigDir(installDir string) string {
 	return filepath.Join(installDir, ConfigDirName)
 }
 
-// GenerateV3 — новая генерация: создаёт config.d/ с фрагментами.
-// Каждый сервер получает свой outbound.
+// GenerateV3 — генерирует config.d/ с фрагментами.
 // Inbounds: tproxy-in (1081), redirect-in (1082), mixed-in (1080).
+// Outbounds: N серверов + M селекторов (по группам).
+// Route rules: все inbound → селектор "proxy-default".
 func GenerateV3(
 	enabledIDs []string,
 	customRules []ruleset.CustomRule,
@@ -45,7 +46,6 @@ func GenerateV3(
 	}
 
 	cfgDir := ConfigDir(installDir)
-	// Чистим старый config.d/
 	if err := os.RemoveAll(cfgDir); err != nil {
 		return fmt.Errorf("remove config.d: %w", err)
 	}
@@ -53,13 +53,11 @@ func GenerateV3(
 		return fmt.Errorf("mkdir config.d: %w", err)
 	}
 
-	// 00-base.json — log, clash_api, direct, block
 	if err := writeJSONFile(filepath.Join(cfgDir, "00-base.json"), buildBase()); err != nil {
 		return fmt.Errorf("00-base: %w", err)
 	}
 
-	// 10-tunnels.json — TProxy + REDIRECT + mixed inbounds + N outbounds + route rules
-	tunnels, err := buildTunnels(proxies)
+	tunnels, err := buildTunnels(proxies, groups)
 	if err != nil {
 		return fmt.Errorf("10-tunnels: %w", err)
 	}
@@ -67,12 +65,10 @@ func GenerateV3(
 		return fmt.Errorf("10-tunnels: %w", err)
 	}
 
-	// 17-dns-rewrites.json — DNS-перехват для Keenetic-доменов
 	if err := writeJSONFile(filepath.Join(cfgDir, "17-dns-rewrites.json"), buildDNSRewrites()); err != nil {
 		return fmt.Errorf("17-dns-rewrites: %w", err)
 	}
 
-	// 99-defaults.json — стратегия и resolver
 	if err := writeJSONFile(filepath.Join(cfgDir, "99-defaults.json"), buildDefaults(dnsCfg)); err != nil {
 		return fmt.Errorf("99-defaults: %w", err)
 	}
@@ -94,8 +90,6 @@ func buildBase() map[string]interface{} {
 			"clash_api": map[string]interface{}{
 				"external_controller": "127.0.0.1:9090",
 			},
-			// На Keenetic кэш вызывает "initialize cache-file: timeout",
-			// поэтому отключаем его.
 			"cache_file": map[string]interface{}{
 				"enabled": false,
 			},
@@ -107,16 +101,14 @@ func buildBase() map[string]interface{} {
 	}
 }
 
-// buildTunnels — TProxy + REDIRECT + mixed inbounds + N outbounds + route rules.
+// buildTunnels — TProxy + REDIRECT + mixed inbounds + N outbounds + M селекторов + route rules.
 //
-// Схема:
-//   - tproxy-in  :1081 — перехват TCP+UDP (основной путь)
-//   - redirect-in:1082 — перехват TCP (запасной, если TProxy не работает)
-//   - mixed-in   :1080 — SOCKS5/HTTP для ndmc-прокси (Keenetic UI)
+// Селекторы: для каждой группы (в которой есть enabled-серверы) создаётся
+// selector с тегом "proxy-<group>". Default = первый enabled-тег.
 //
-// Маршрутизация: все три inbound → первый сервер (default).
-// В будущем: правила по inbound/домену → разные серверы.
-func buildTunnels(proxies []subscription.Proxy) (map[string]interface{}, error) {
+// Route rule: все inbounds → "proxy-default" (если группа "default" существует)
+// или первый селектор. Failover может переключать селектор между серверами.
+func buildTunnels(proxies []subscription.Proxy, groups GroupConfig) (map[string]interface{}, error) {
 	inbounds := []map[string]interface{}{
 		{
 			"type":        "tproxy",
@@ -139,7 +131,9 @@ func buildTunnels(proxies []subscription.Proxy) (map[string]interface{}, error) 
 		},
 	}
 
+	// Outbounds — серверы.
 	outbounds := make([]map[string]interface{}, 0, len(proxies))
+	allTags := make([]string, 0, len(proxies))
 	for _, p := range proxies {
 		ob := proxyToOutbound(p)
 		if ob == nil {
@@ -147,16 +141,46 @@ func buildTunnels(proxies []subscription.Proxy) (map[string]interface{}, error) 
 		}
 		ob["tag"] = p.Tag
 		outbounds = append(outbounds, ob)
+		allTags = append(allTags, p.Tag)
 	}
 
-	// Первый сервер — default для TProxy/REDIRECT/mixed.
-	defaultTag := proxies[0].Tag
+	// Селекторы — по группам.
+	selectorTags := make([]string, 0, len(groups))
+	for name, g := range groups {
+		tags := g.PriorityTags()
+		if len(tags) == 0 {
+			continue
+		}
+		selectorTag := "proxy-" + name
+		selector := map[string]interface{}{
+			"type":      "selector",
+			"tag":       selectorTag,
+			"outbounds": tags,
+			"default":   tags[0],
+		}
+		outbounds = append(outbounds, selector)
+		selectorTags = append(selectorTags, selectorTag)
+		fmt.Printf("[config] selector %s → %v\n", selectorTag, tags)
+	}
+
+	// Route rules: все inbound → proxy-default (если есть), иначе первый селектор, иначе первый сервер.
+	defaultOutbound := "direct"
+	if hasTag(selectorTags, "proxy-default") {
+		defaultOutbound = "proxy-default"
+	} else if len(selectorTags) > 0 {
+		defaultOutbound = selectorTags[0]
+	} else if len(allTags) > 0 {
+		defaultOutbound = allTags[0]
+	}
+
 	rules := []map[string]interface{}{
 		{
 			"inbound":  []string{"tproxy-in", "redirect-in", "mixed-in"},
-			"outbound": defaultTag,
+			"outbound": defaultOutbound,
 		},
 	}
+
+	fmt.Printf("[config] route: all inbounds → %s\n", defaultOutbound)
 
 	return map[string]interface{}{
 		"inbounds":  inbounds,
@@ -166,6 +190,16 @@ func buildTunnels(proxies []subscription.Proxy) (map[string]interface{}, error) 
 			"final": "direct",
 		},
 	}, nil
+}
+
+// hasTag — проверяет наличие строки в слайсе.
+func hasTag(tags []string, target string) bool {
+	for _, t := range tags {
+		if t == target {
+			return true
+		}
+	}
+	return false
 }
 
 // buildDNSRewrites — DNS-перехват для Keenetic-доменов.
@@ -197,7 +231,6 @@ func buildDNSRewrites() map[string]interface{} {
 // buildDefaults — стратегия, resolver.
 func buildDefaults(dnsCfg DNSConfig) map[string]interface{} {
 	_ = dnsCfg
-	defaultResolver := "dns-bootstrap"
 	return map[string]interface{}{
 		"dns": map[string]interface{}{
 			"servers": []map[string]interface{}{
@@ -212,7 +245,7 @@ func buildDefaults(dnsCfg DNSConfig) map[string]interface{} {
 		},
 		"route": map[string]interface{}{
 			"default_domain_resolver": map[string]interface{}{
-				"server": defaultResolver,
+				"server": "dns-bootstrap",
 			},
 		},
 	}
@@ -226,8 +259,6 @@ func writeJSONFile(path string, v interface{}) error {
 	}
 	return os.WriteFile(path, data, 0644)
 }
-
-// -------------------- старые функции (для совместимости) --------------------
 
 // Generate — старый API, оставлен для совместимости.
 func Generate(
