@@ -10,27 +10,15 @@ import (
 	"github.com/shapovalenko/keenetic-singbox-manager/internal/subscription"
 )
 
-// BasePort — базовый порт первого mixed-inbound. Каждый сервер = 1080, 1081, ...
 const BasePort = 1080
-
-// TProxyPort — порт TProxy-inbound (UDP+TCP).
 const TProxyPort = 1081
-
-// RedirectPort — порт REDIRECT-inbound (TCP, запасной).
 const RedirectPort = 1082
-
-// ConfigDir — каталог с фрагментами конфига для `sing-box -C`.
 const ConfigDirName = "config.d"
 
-// ConfigDir возвращает абсолютный путь к каталогу config.d.
 func ConfigDir(installDir string) string {
 	return filepath.Join(installDir, ConfigDirName)
 }
 
-// GenerateV3 — генерирует config.d/ с фрагментами.
-// Inbounds: tproxy-in (1081), redirect-in (1082), mixed-in (1080).
-// Outbounds: N серверов + M селекторов (по группам).
-// Route rules: все inbound → селектор "proxy-default".
 func GenerateV3(
 	enabledIDs []string,
 	customRules []ruleset.CustomRule,
@@ -57,7 +45,7 @@ func GenerateV3(
 		return fmt.Errorf("00-base: %w", err)
 	}
 
-	tunnels, err := buildTunnels(proxies, groups)
+	tunnels, err := buildTunnels(proxies, groups, enabledIDs, customSRS)
 	if err != nil {
 		return fmt.Errorf("10-tunnels: %w", err)
 	}
@@ -79,7 +67,6 @@ func GenerateV3(
 	return nil
 }
 
-// buildBase — базовые настройки.
 func buildBase() map[string]interface{} {
 	return map[string]interface{}{
 		"log": map[string]interface{}{
@@ -101,14 +88,7 @@ func buildBase() map[string]interface{} {
 	}
 }
 
-// buildTunnels — TProxy + REDIRECT + mixed inbounds + N outbounds + M селекторов + route rules.
-//
-// Селекторы: для каждой группы (в которой есть enabled-серверы) создаётся
-// selector с тегом "proxy-<group>". Default = первый enabled-тег.
-//
-// Route rule: все inbounds → "proxy-default" (если группа "default" существует)
-// или первый селектор. Failover может переключать селектор между серверами.
-func buildTunnels(proxies []subscription.Proxy, groups GroupConfig) (map[string]interface{}, error) {
+func buildTunnels(proxies []subscription.Proxy, groups GroupConfig, enabledIDs []string, customSRS []ruleset.CustomSRS) (map[string]interface{}, error) {
 	inbounds := []map[string]interface{}{
 		{
 			"type":        "tproxy",
@@ -131,9 +111,7 @@ func buildTunnels(proxies []subscription.Proxy, groups GroupConfig) (map[string]
 		},
 	}
 
-	// Outbounds — серверы.
 	outbounds := make([]map[string]interface{}, 0, len(proxies))
-	allTags := make([]string, 0, len(proxies))
 	for _, p := range proxies {
 		ob := proxyToOutbound(p)
 		if ob == nil {
@@ -141,11 +119,8 @@ func buildTunnels(proxies []subscription.Proxy, groups GroupConfig) (map[string]
 		}
 		ob["tag"] = p.Tag
 		outbounds = append(outbounds, ob)
-		allTags = append(allTags, p.Tag)
 	}
 
-	// Селекторы — по группам.
-	selectorTags := make([]string, 0, len(groups))
 	for name, g := range groups {
 		tags := g.PriorityTags()
 		if len(tags) == 0 {
@@ -159,50 +134,64 @@ func buildTunnels(proxies []subscription.Proxy, groups GroupConfig) (map[string]
 			"default":   tags[0],
 		}
 		outbounds = append(outbounds, selector)
-		selectorTags = append(selectorTags, selectorTag)
-		fmt.Printf("[config] selector %s → %v\n", selectorTag, tags)
 	}
 
-	// Route rules: все inbound → proxy-default (если есть), иначе первый селектор, иначе первый сервер.
-	defaultOutbound := "direct"
-	if hasTag(selectorTags, "proxy-default") {
-		defaultOutbound = "proxy-default"
-	} else if len(selectorTags) > 0 {
-		defaultOutbound = selectorTags[0]
-	} else if len(allTags) > 0 {
-		defaultOutbound = allTags[0]
+	ruleSets := make([]map[string]interface{}, 0, len(enabledIDs)+len(customSRS))
+	rules := make([]map[string]interface{}, 0, len(enabledIDs)+len(customSRS))
+
+	for _, id := range enabledIDs {
+		path := "/opt/etc/sing-box/rulesets/" + id + ".srs"
+		if _, err := os.Stat(path); err != nil {
+			fmt.Printf("[config] пропущен %s (нет файла)\n", id)
+			continue
+		}
+		ruleSets = append(ruleSets, map[string]interface{}{
+			"type":   "local",
+			"tag":    id,
+			"format": "binary",
+			"path":   path,
+		})
+		rules = append(rules, map[string]interface{}{
+			"rule_set": []string{id},
+			"outbound": "proxy-" + id,
+		})
 	}
 
-	rules := []map[string]interface{}{
-		{
-			"inbound":  []string{"tproxy-in", "redirect-in", "mixed-in"},
-			"outbound": defaultOutbound,
-		},
+	for _, srs := range customSRS {
+		path := "/opt/etc/sing-box/rulesets/" + srs.ID + ".srs"
+		if _, err := os.Stat(path); err != nil {
+			fmt.Printf("[config] пропущен %s (нет файла)\n", srs.ID)
+			continue
+		}
+		ruleSets = append(ruleSets, map[string]interface{}{
+			"type":   "local",
+			"tag":    srs.ID,
+			"format": "binary",
+			"path":   path,
+		})
+		rules = append(rules, map[string]interface{}{
+			"rule_set": []string{srs.ID},
+			"outbound": "proxy-" + srs.ID,
+		})
 	}
 
-	fmt.Printf("[config] route: all inbounds → %s\n", defaultOutbound)
+	fmt.Printf("[config] rule_set: %d, rules: %d, final: direct\n", len(ruleSets), len(rules))
+
+	route := map[string]interface{}{
+		"rules": rules,
+		"final": "direct",
+	}
+	if len(ruleSets) > 0 {
+		route["rule_set"] = ruleSets
+	}
 
 	return map[string]interface{}{
 		"inbounds":  inbounds,
 		"outbounds": outbounds,
-		"route": map[string]interface{}{
-			"rules": rules,
-			"final": "direct",
-		},
+		"route":     route,
 	}, nil
 }
 
-// hasTag — проверяет наличие строки в слайсе.
-func hasTag(tags []string, target string) bool {
-	for _, t := range tags {
-		if t == target {
-			return true
-		}
-	}
-	return false
-}
-
-// buildDNSRewrites — DNS-перехват для Keenetic-доменов.
 func buildDNSRewrites() map[string]interface{} {
 	return map[string]interface{}{
 		"dns": map[string]interface{}{
@@ -228,7 +217,6 @@ func buildDNSRewrites() map[string]interface{} {
 	}
 }
 
-// buildDefaults — стратегия, resolver.
 func buildDefaults(dnsCfg DNSConfig) map[string]interface{} {
 	_ = dnsCfg
 	return map[string]interface{}{
@@ -251,7 +239,6 @@ func buildDefaults(dnsCfg DNSConfig) map[string]interface{} {
 	}
 }
 
-// writeJSONFile — записывает JSON-файл с отступами.
 func writeJSONFile(path string, v interface{}) error {
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
@@ -260,7 +247,6 @@ func writeJSONFile(path string, v interface{}) error {
 	return os.WriteFile(path, data, 0644)
 }
 
-// Generate — старый API, оставлен для совместимости.
 func Generate(
 	enabledIDs []string,
 	customRules []ruleset.CustomRule,
@@ -272,14 +258,8 @@ func Generate(
 	outPath string,
 ) error {
 	installDir := filepath.Dir(outPath)
-	return GenerateV3(
-		enabledIDs, customRules, customSRS,
-		proxies, groups, dnsCfg, devices,
-		installDir,
-	)
+	return GenerateV3(enabledIDs, customRules, customSRS, proxies, groups, dnsCfg, devices, installDir)
 }
-
-// -------------------- outbound-хелперы --------------------
 
 func proxyToOutbound(p subscription.Proxy) map[string]interface{} {
 	switch p.Protocol {
