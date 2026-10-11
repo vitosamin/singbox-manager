@@ -364,3 +364,84 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
 /* Скрываем вкладку "Мониторинг" — контент не создаётся, страница не нужна */
 .nav-tab[data-tab="monitor"] { display: none !important; }
 .tab-page[data-page="monitor"] { display: none !important; }
+
+/* ============================================================
+   VPN Status Card — карточка состояния VPN в сайдбаре
+   ============================================================ */
+.vpn-status-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 12px 12px 18px;
+    padding: 10px 12px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    transition: border-color 0.15s, background 0.15s;
+}
+
+.vpn-status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    transition: background 0.15s, box-shadow 0.15s;
+    background: #888;
+}
+
+.vpn-status-dot.active {
+    background: #2ecc71;
+    box-shadow: 0 0 6px rgba(46, 204, 113, 0.6);
+}
+
+.vpn-status-dot.inactive {
+    background: #e74c3c;
+    box-shadow: 0 0 6px rgba(231, 76, 60, 0.6);
+}
+
+.vpn-status-text {
+    flex: 1;
+    min-width: 0;
+}
+
+.vpn-status-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    line-height: 1.2;
+}
+
+.vpn-status-sub {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 2px;
+}
+
+/* Кнопка «Остановить VPN» — красная */
+.btn.btn-danger {
+    background: #e74c3c !important;
+    color: #fff !important;
+    border-color: #c0392b !important;
+}
+
+.btn.btn-danger:hover {
+    background: #c0392b !important;
+}
+
+/* Скрываем карточку статуса при свёрнутом сайдбаре */
+.sidebar.collapsed .vpn-status-card {
+    justify-content: center;
+    padding: 8px;
+}
+
+.sidebar.collapsed .vpn-status-text {
+    display: none;
+}
+
+/* На мобильных — тоже оставляем, но сжимаем */
+@media (max-width: 768px) {
+    .vpn-status-card {
+        margin: 8px 8px 12px;
+        padding: 8px 10px;
+    }
+}

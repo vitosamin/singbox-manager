@@ -18,6 +18,14 @@
             </div>
         </div>
 
+        <div class="vpn-status-card" id="vpn-status-card">
+            <div class="vpn-status-dot" id="vpn-status-dot"></div>
+            <div class="vpn-status-text">
+                <div class="vpn-status-title" id="vpn-status-title">VPN активен</div>
+                <div class="vpn-status-sub" id="vpn-status-sub">sing-box 1.14.2</div>
+            </div>
+        </div>
+
         <div class="nav-section-title">ОСНОВНОЕ</div>
         <div class="nav-tabs">
             <a class="nav-tab" data-tab="servers" title="Серверы">
@@ -76,6 +84,8 @@
                     <button data-theme-btn="auto" title="Авто">🖥️</button>
                 </div>
                 <span id="apply-status" class="status"></span>
+                <button id="btn-vpn-toggle" class="btn" title="Остановить VPN">⏸ Остановить VPN</button>
+                <button id="btn-firewall-check" class="btn" title="Проверить правила iptables">🔍 Проверить</button>
                 <button id="btn-restart" class="btn" title="Перезапустить Sing-box">🔁 Рестарт</button>
                 <button id="btn-apply" class="btn primary">Применить</button>
             </div>
@@ -94,12 +104,11 @@
             <div class="how-it-works">
                 <div class="hiw-title">🧭 Как работает маршрутизация</div>
                 <div class="hiw-steps">
-                    <div class="hiw-step"><b>1. Перехват</b> — весь трафик из LAN идёт в Sing-box (TUN или mixed-inbound).</div>
+                    <div class="hiw-step"><b>1. Перехват</b> — весь трафик из LAN идёт в Sing-box (TProxy + REDIRECT).</div>
                     <div class="hiw-step"><b>2. DNS</b> — домен резолвится через <code>dns-router</code> (AdGuard) или через VPN.</div>
                     <div class="hiw-step"><b>3. Правила по порядку</b> — устройства → каталог → свои правила → свои .srs → финал.</div>
                     <div class="hiw-step"><b>4. Группа</b> — если домен попал в список, трафик уходит в селектор группы (например <code>proxy-youtube</code>).</div>
                     <div class="hiw-step"><b>5. Failover</b> — менеджер мониторит задержки и переключает селектор на живой сервер.</div>
-                    <div class="hiw-step"><b>Всё в реальном времени</b> — правила загружены в память при старте, проверка за миллисекунды.</div>
                 </div>
             </div>
 
@@ -249,6 +258,17 @@
             </div>
 
             <div class="settings-card">
+                <h3>🛡️ Обслуживание</h3>
+                <div class="section-hint" style="margin-bottom:12px;">
+                    Проверка цепочек iptables. Если пропали — восстанавливает.
+                </div>
+                <div class="actions">
+                    <button id="btn-settings-firewall-check" class="btn primary">🔍 Проверить правила</button>
+                    <span id="firewall-check-status" class="status"></span>
+                </div>
+            </div>
+
+            <div class="settings-card">
                 <h3>🔐 Смена пароля</h3>
                 <div class="section-hint" style="margin-bottom:12px;">
                     Пароль защищает доступ к веб-интерфейсу. После смены нужно войти заново.
@@ -291,13 +311,6 @@
             </div>
         </section>
 
-        <section class="tab-page" data-page="monitor">
-            <div class="section-hint" style="margin-bottom:14px;">
-                Обновляется каждые 5 секунд.
-            </div>
-            <div id="monitor" class="monitor"></div>
-        </section>
-
         <section class="tab-page" data-page="logs">
             <div class="actions" style="margin-bottom:14px;">
                 <button id="btn-logs-auto" class="btn primary">⏸ Остановить автообновление</button>
@@ -322,5 +335,6 @@
 </div>
 
 <script src="/static/app.js"></script>
+<script src="/static/vpn_ui.js"></script>
 </body>
 </html>
