@@ -88,9 +88,55 @@ func (s *Store) Load() error {
 	if st.Settings.LogRingSize == 0 {
 		st.Settings = config.DefaultSettings()
 	}
+
+	// ВАЖНО: чиним дубликаты тегов при загрузке.
+	st.Proxies = dedupeTags(st.Proxies)
+
 	s.state = &st
 	s.syncAllGroupsLocked()
 	return nil
+}
+
+// dedupeTags — исправляет дубликаты тегов в массиве прокси.
+// Если тег занят — генерирует новый proxy-N.
+func dedupeTags(proxies []subscription.Proxy) []subscription.Proxy {
+	used := make(map[string]bool)
+	// Первый проход: помечаем занятые теги.
+	for _, p := range proxies {
+		if p.Tag != "" && !used[p.Tag] {
+			used[p.Tag] = true
+		}
+	}
+	// Второй проход: чиним дубликаты.
+	for i := range proxies {
+		tag := proxies[i].Tag
+		if tag == "" || !isUnique(proxies[:i], tag) {
+			// Ищем свободный proxy-N.
+			proxies[i].Tag = nextFreeTag(used)
+			used[proxies[i].Tag] = true
+		}
+	}
+	return proxies
+}
+
+// isUnique — проверяет, что tag не встречается в предыдущих элементах.
+func isUnique(prev []subscription.Proxy, tag string) bool {
+	for _, p := range prev {
+		if p.Tag == tag {
+			return false
+		}
+	}
+	return true
+}
+
+// nextFreeTag — находит следующий свободный тег proxy-N.
+func nextFreeTag(used map[string]bool) string {
+	for i := 1; ; i++ {
+		tag := fmt.Sprintf("proxy-%d", i)
+		if !used[tag] {
+			return tag
+		}
+	}
 }
 
 func (s *Store) Save() error {
@@ -213,7 +259,7 @@ func (s *Store) SetSubscription(text string, proxies []subscription.Proxy) error
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.state.Subscription = text
-	s.state.Proxies = proxies
+	s.state.Proxies = dedupeTags(proxies)
 	s.syncAllGroupsLocked()
 	return s.saveLocked()
 }
@@ -349,6 +395,8 @@ func (s *Store) PasswordHash() string {
 	return s.state.PasswordHash
 }
 
+// AddProxy — добавляет один сервер с УНИКАЛЬНЫМ тегом.
+// Тег генерируется через nextFreeTag, чтобы не было коллизий (баг v4.0.0–v4.0.2).
 func (s *Store) AddProxy(raw string) ([]subscription.Proxy, error) {
 	parsed, err := subscription.Parse(raw)
 	if err != nil {
@@ -357,15 +405,28 @@ func (s *Store) AddProxy(raw string) ([]subscription.Proxy, error) {
 	if len(parsed) == 0 {
 		return nil, fmt.Errorf("не распознано ни одной ссылки")
 	}
-	nextIdx := len(s.state.Proxies) + 1
-	for i := range parsed {
-		parsed[i].Tag = fmt.Sprintf("proxy-%d", nextIdx+i)
-	}
+
 	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Собираем занятые теги.
+	used := make(map[string]bool)
+	for _, p := range s.state.Proxies {
+		if p.Tag != "" {
+			used[p.Tag] = true
+		}
+	}
+	// Присваиваем уникальные теги.
+	for i := range parsed {
+		if parsed[i].Tag == "" || used[parsed[i].Tag] {
+			parsed[i].Tag = nextFreeTag(used)
+		}
+		used[parsed[i].Tag] = true
+	}
+
 	s.state.Proxies = append(s.state.Proxies, parsed...)
 	s.syncAllGroupsLocked()
 	err = s.saveLocked()
-	s.mu.Unlock()
 	return parsed, err
 }
 
@@ -410,6 +471,9 @@ func (s *Store) ReplaceFromJSON(data []byte) error {
 	if st.Theme == "" { st.Theme = "dark" }
 	if len(st.DNS.Servers) == 0 { st.DNS = config.DefaultDNSConfig() }
 	if st.Settings.LogRingSize == 0 { st.Settings = config.DefaultSettings() }
+
+	st.Proxies = dedupeTags(st.Proxies)
+
 	s.mu.Lock()
 	s.state = &st
 	s.syncAllGroupsLocked()
