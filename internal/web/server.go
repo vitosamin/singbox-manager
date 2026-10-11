@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -104,7 +105,6 @@ func Start(addr string) error {
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
 	mux.Handle("/", http.FileServer(http.FS(tmplFS)))
 
-	// Оборачиваем в auth middleware
 	handler := auth.Middleware(authMgr, mux)
 
 	fmt.Printf("[web] сервер запущен на http://%s\n", addr)
@@ -133,19 +133,28 @@ func handleCatalog(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, ruleset.Catalog)
 }
 
-// handleSubscription — парсит и сохраняет подписку.
+// handleSubscription — парсит и ДОБАВЛЯЕТ прокси из подписки.
+// ВАЖНО: если text пустой — ничего не делаем, чтобы не обнулить state.Proxies.
 func handleSubscription(w http.ResponseWriter, r *http.Request) {
 	var body struct{ Text string `json:"text"` }
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	proxies, err := subscription.Parse(body.Text)
+
+	text := strings.TrimSpace(body.Text)
+	if text == "" {
+		writeJSON(w, map[string]interface{}{"ok": true, "count": 0, "message": "пустая подписка — пропущено"})
+		return
+	}
+
+	proxies, err := subscription.Parse(text)
 	if err != nil {
 		writeJSON(w, map[string]interface{}{"error": err.Error()})
 		return
 	}
-	if err := store.SetSubscription(body.Text, proxies); err != nil {
+
+	if err := store.SetSubscription(text, proxies); err != nil {
 		writeJSON(w, map[string]interface{}{"error": err.Error()})
 		return
 	}
@@ -475,7 +484,7 @@ func handleApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 3. Резолвим IP VLESS-серверов (чтобы исключить их из перехвата — иначе петля)
+	// 3. Резолвим IP VLESS-серверов
 	serverHosts := make([]string, 0, len(st.Proxies))
 	for _, p := range st.Proxies {
 		if p.Server != "" {
