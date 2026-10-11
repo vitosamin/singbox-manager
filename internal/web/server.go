@@ -545,7 +545,7 @@ func handleFirewallCheck(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleApply — ГЛАВНОЕ:
-//   1. Скачивает .srs
+//   1. Скачивает .srs (мягко — при ошибке использует кэш)
 //   2. Генерирует config.d/
 //   3. Резолвит IP серверов и ставит iptables-правила (TProxy + REDIRECT)
 //   4. Запускает Sing-box с -C config.d
@@ -561,17 +561,22 @@ func handleApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 1. Скачиваем .srs
+	// 1. Скачиваем .srs (МЯГКО — ошибка не отменяет Apply).
+	var srsWarnings []string
 	for _, id := range st.EnabledLists {
 		if _, err := ruleset.DownloadByID(id); err != nil {
-			writeJSON(w, map[string]interface{}{"error": fmt.Sprintf("download %s: %v", id, err)})
-			return
+			msg := fmt.Sprintf("список %s: %v", id, err)
+			srsWarnings = append(srsWarnings, msg)
+			fmt.Printf("[web] предупреждение: %s\n", msg)
+			// НЕ отменяем Apply
 		}
 	}
 	for _, srs := range st.CustomSRS {
 		if _, err := ruleset.Download(srs.ID, srs.URL); err != nil {
-			writeJSON(w, map[string]interface{}{"error": fmt.Sprintf("download custom %s: %v", srs.Name, err)})
-			return
+			msg := fmt.Sprintf("custom .srs %s: %v", srs.Name, err)
+			srsWarnings = append(srsWarnings, msg)
+			fmt.Printf("[web] предупреждение: %s\n", msg)
+			// НЕ отменяем Apply
 		}
 	}
 
@@ -610,11 +615,15 @@ func handleApply(w http.ResponseWriter, r *http.Request) {
 		startMonitor(st.Groups)
 	}
 
-	writeJSON(w, map[string]interface{}{
+	resp := map[string]interface{}{
 		"ok":      true,
 		"lists":   len(st.EnabledLists),
 		"proxies": len(st.Proxies),
-	})
+	}
+	if len(srsWarnings) > 0 {
+		resp["warnings"] = srsWarnings
+	}
+	writeJSON(w, resp)
 }
 
 // startMonitor — запускает failover-монитор в фоне.
