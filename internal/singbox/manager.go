@@ -150,7 +150,6 @@ func downloadFromOfficial() error {
 		return fmt.Errorf("Seek: %w", err)
 	}
 
-	// Распаковка tar.gz
 	if err := extractTarGz(tmpFile, InstallDir()); err != nil {
 		return fmt.Errorf("extractTarGz: %w", err)
 	}
@@ -176,7 +175,6 @@ func (ringWriter) Write(p []byte) (int, error) {
 }
 
 // Restart — перезапускает Sing-box с `-C config.d`.
-// serverHosts — список доменов/адресов серверов (используется только для логов).
 func Restart(serverHosts []string) error {
 	_ = serverHosts
 
@@ -202,13 +200,17 @@ func Restart(serverHosts []string) error {
 		return fmt.Errorf("start: %w", err)
 	}
 
+	// Fix zombie: горутина ждёт завершения процесса и убирает зомби.
+	go func() {
+		_ = cmd.Wait()
+	}()
+
 	pidPath := InstallDir() + "/sing-box.pid"
 	pidStr := fmt.Sprintf("%d", cmd.Process.Pid)
 	os.WriteFile(pidPath, []byte(pidStr), 0644)
 
 	fmt.Printf("[singbox] запущен, PID=%d\n", cmd.Process.Pid)
 
-	// Ждём Clash API
 	deadline := time.Now().Add(10 * time.Second)
 	client := &http.Client{Timeout: 1 * time.Second}
 	apiOK := false
