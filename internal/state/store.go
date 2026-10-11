@@ -24,6 +24,7 @@ type State struct {
 	Theme        string               `json:"theme"`
 	Settings     config.Settings      `json:"settings"`
 	PasswordHash string               `json:"password_hash"`
+	VPNEnabled   bool                 `json:"vpn_enabled"`
 }
 
 type Store struct {
@@ -42,11 +43,12 @@ func NewStore() *Store {
 	return &Store{
 		Path: path,
 		state: &State{
-			Groups:   config.GroupConfig{},
-			DNS:      config.DefaultDNSConfig(),
-			Devices:  []config.DeviceRule{},
-			Theme:    "dark",
-			Settings: config.DefaultSettings(),
+			Groups:     config.GroupConfig{},
+			DNS:        config.DefaultDNSConfig(),
+			Devices:    []config.DeviceRule{},
+			Theme:      "dark",
+			Settings:   config.DefaultSettings(),
+			VPNEnabled: true,
 		},
 	}
 }
@@ -89,7 +91,15 @@ func (s *Store) Load() error {
 		st.Settings = config.DefaultSettings()
 	}
 
-	// ВАЖНО: чиним дубликаты тегов при загрузке.
+	// Если файл-маркер vpn.disabled существует — VPN выключен.
+	// Иначе — VPN включён (обратная совместимость со старым state.json).
+	if _, err := os.Stat("/opt/etc/sing-box/vpn.disabled"); err == nil {
+		st.VPNEnabled = false
+	} else {
+		st.VPNEnabled = true
+	}
+
+	// Чиним дубликаты тегов при загрузке.
 	st.Proxies = dedupeTags(st.Proxies)
 
 	s.state = &st
@@ -98,20 +108,16 @@ func (s *Store) Load() error {
 }
 
 // dedupeTags — исправляет дубликаты тегов в массиве прокси.
-// Если тег занят — генерирует новый proxy-N.
 func dedupeTags(proxies []subscription.Proxy) []subscription.Proxy {
 	used := make(map[string]bool)
-	// Первый проход: помечаем занятые теги.
 	for _, p := range proxies {
 		if p.Tag != "" && !used[p.Tag] {
 			used[p.Tag] = true
 		}
 	}
-	// Второй проход: чиним дубликаты.
 	for i := range proxies {
 		tag := proxies[i].Tag
 		if tag == "" || !isUnique(proxies[:i], tag) {
-			// Ищем свободный proxy-N.
 			proxies[i].Tag = nextFreeTag(used)
 			used[proxies[i].Tag] = true
 		}
@@ -119,7 +125,6 @@ func dedupeTags(proxies []subscription.Proxy) []subscription.Proxy {
 	return proxies
 }
 
-// isUnique — проверяет, что tag не встречается в предыдущих элементах.
 func isUnique(prev []subscription.Proxy, tag string) bool {
 	for _, p := range prev {
 		if p.Tag == tag {
@@ -129,7 +134,6 @@ func isUnique(prev []subscription.Proxy, tag string) bool {
 	return true
 }
 
-// nextFreeTag — находит следующий свободный тег proxy-N.
 func nextFreeTag(used map[string]bool) string {
 	for i := 1; ; i++ {
 		tag := fmt.Sprintf("proxy-%d", i)
@@ -382,6 +386,21 @@ func (s *Store) SetSettings(settings config.Settings) error {
 	return s.saveLocked()
 }
 
+// SetVPNEnabled — сохраняет флаг VPN в state.json.
+func (s *Store) SetVPNEnabled(enabled bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.state.VPNEnabled = enabled
+	return s.saveLocked()
+}
+
+// VPNEnabled — читает флаг VPN.
+func (s *Store) VPNEnabled() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.state.VPNEnabled
+}
+
 func (s *Store) SetPasswordHash(hash string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -395,8 +414,6 @@ func (s *Store) PasswordHash() string {
 	return s.state.PasswordHash
 }
 
-// AddProxy — добавляет один сервер с УНИКАЛЬНЫМ тегом.
-// Тег генерируется через nextFreeTag, чтобы не было коллизий (баг v4.0.0–v4.0.2).
 func (s *Store) AddProxy(raw string) ([]subscription.Proxy, error) {
 	parsed, err := subscription.Parse(raw)
 	if err != nil {
@@ -409,14 +426,12 @@ func (s *Store) AddProxy(raw string) ([]subscription.Proxy, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Собираем занятые теги.
 	used := make(map[string]bool)
 	for _, p := range s.state.Proxies {
 		if p.Tag != "" {
 			used[p.Tag] = true
 		}
 	}
-	// Присваиваем уникальные теги.
 	for i := range parsed {
 		if parsed[i].Tag == "" || used[parsed[i].Tag] {
 			parsed[i].Tag = nextFreeTag(used)

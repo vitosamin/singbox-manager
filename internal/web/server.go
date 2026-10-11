@@ -19,6 +19,7 @@ import (
 	"github.com/shapovalenko/keenetic-singbox-manager/internal/singbox"
 	"github.com/shapovalenko/keenetic-singbox-manager/internal/state"
 	"github.com/shapovalenko/keenetic-singbox-manager/internal/subscription"
+	"github.com/shapovalenko/keenetic-singbox-manager/internal/vpn"
 )
 
 //go:embed templates/* static/*
@@ -45,7 +46,6 @@ func Start(addr string) error {
 		}
 	}
 
-	// Инициализируем auth
 	var defaultPassword string
 	authMgr, defaultPassword = auth.NewManager(store.PasswordHash())
 	if defaultPassword != "" {
@@ -76,7 +76,7 @@ func Start(addr string) error {
 		}
 	})
 
-	// --- API (защищённые) ---
+	// --- API ---
 	mux.HandleFunc("/api/state", handleState)
 	mux.HandleFunc("/api/catalog", handleCatalog)
 	mux.HandleFunc("/api/subscription", handleSubscription)
@@ -99,6 +99,12 @@ func Start(addr string) error {
 	mux.HandleFunc("/api/export", handleExport)
 	mux.HandleFunc("/api/import", handleImport)
 	mux.HandleFunc("/api/apply", handleApply)
+
+	// VPN Stop/Start/Status + Firewall Check
+	mux.HandleFunc("/api/vpn/stop", handleVPNStop)
+	mux.HandleFunc("/api/vpn/start", handleVPNStart)
+	mux.HandleFunc("/api/vpn/status", handleVPNStatus)
+	mux.HandleFunc("/api/firewall/check", handleFirewallCheck)
 
 	tmplFS, _ := fs.Sub(content, "templates")
 	staticFS, _ := fs.Sub(content, "static")
@@ -125,6 +131,7 @@ func handleState(w http.ResponseWriter, r *http.Request) {
 		"devices":      st.Devices,
 		"theme":        st.Theme,
 		"settings":     st.Settings,
+		"vpn_enabled":  st.VPNEnabled,
 	})
 }
 
@@ -134,7 +141,6 @@ func handleCatalog(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleSubscription — парсит и ДОБАВЛЯЕТ прокси из подписки.
-// ВАЖНО: если text пустой — ничего не делаем, чтобы не обнулить state.Proxies.
 func handleSubscription(w http.ResponseWriter, r *http.Request) {
 	var body struct{ Text string `json:"text"` }
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -447,9 +453,95 @@ func handleImport(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]interface{}{"ok": true})
 }
 
+// handleVPNStop — снимает iptables-правила (VPN выключается, sing-box работает).
+func handleVPNStop(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := vpn.Stop(); err != nil {
+		writeJSON(w, map[string]interface{}{"error": err.Error()})
+		return
+	}
+	_ = store.SetVPNEnabled(false)
+	writeJSON(w, map[string]interface{}{"ok": true, "enabled": false})
+}
+
+// handleVPNStart — восстанавливает iptables-правила (VPN включается).
+func handleVPNStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	st := store.Snapshot()
+	serverHosts := make([]string, 0, len(st.Proxies))
+	for _, p := range st.Proxies {
+		if p.Server != "" {
+			serverHosts = append(serverHosts, p.Server)
+		}
+	}
+	vlessIPs := singbox.ResolveServerIPs(serverHosts)
+
+	if err := vpn.Start(vlessIPs); err != nil {
+		writeJSON(w, map[string]interface{}{"error": err.Error()})
+		return
+	}
+	_ = store.SetVPNEnabled(true)
+	writeJSON(w, map[string]interface{}{"ok": true, "enabled": true})
+}
+
+// handleVPNStatus — возвращает текущий статус VPN.
+func handleVPNStatus(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, map[string]interface{}{
+		"enabled": store.VPNEnabled(),
+	})
+}
+
+// handleFirewallCheck — проверяет цепочки iptables и восстанавливает, если пропали.
+func handleFirewallCheck(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if vpn.IsDisabled() {
+		writeJSON(w, map[string]interface{}{
+			"ok":      true,
+			"message": "VPN выключен, проверка пропущена",
+			"changed": false,
+		})
+		return
+	}
+
+	st := store.Snapshot()
+	serverHosts := make([]string, 0, len(st.Proxies))
+	for _, p := range st.Proxies {
+		if p.Server != "" {
+			serverHosts = append(serverHosts, p.Server)
+		}
+	}
+	vlessIPs := singbox.ResolveServerIPs(serverHosts)
+
+	changed, err := vpn.Check(vlessIPs)
+	if err != nil {
+		writeJSON(w, map[string]interface{}{"error": err.Error()})
+		return
+	}
+	msg := "Правила в порядке"
+	if changed {
+		msg = "Правила восстановлены"
+	}
+	writeJSON(w, map[string]interface{}{
+		"ok":      true,
+		"message": msg,
+		"changed": changed,
+	})
+}
+
 // handleApply — ГЛАВНОЕ:
 //   1. Скачивает .srs
-//   2. Генерирует config.d/ (TProxy + REDIRECT + mixed)
+//   2. Генерирует config.d/
 //   3. Резолвит IP серверов и ставит iptables-правила (TProxy + REDIRECT)
 //   4. Запускает Sing-box с -C config.d
 func handleApply(w http.ResponseWriter, r *http.Request) {

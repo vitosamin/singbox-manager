@@ -154,6 +154,13 @@ func Cleanup() error {
 	return nil
 }
 
+// CheckChain — проверяет, существует ли цепочка в указанной таблице.
+// Возвращает nil, если цепочка есть.
+func CheckChain(chain, table string) error {
+	cmd := exec.Command("iptables", "-t", table, "-L", chain, "-n")
+	return cmd.Run()
+}
+
 // WriteNDMSHook — создаёт хук для KeeneticOS.
 func WriteNDMSHook() error {
 	script := `#!/bin/sh
@@ -174,18 +181,31 @@ table="$2"
 # Только nat и mangle
 [ "$table" != "nat" ] && [ "$table" != "mangle" ] && exit 0
 
+# VPN выключен — не восстанавливаем
+[ -f /opt/etc/sing-box/vpn.disabled ] && exit 0
+
 # Sing-box должен быть запущен
 ps -w | grep -v grep | grep -q "sing-box" || exit 0
 
-# Небольшая задержка — даём NDM закончить перестройку
-sleep 1
+# Retry: до 5 попыток, каждые 2 секунды, пока ОБЕ цепочки не будут на месте
+for i in 1 2 3 4 5; do
+    nat_ok=0
+    mangle_ok=0
+    iptables -t nat -L SB_TCP -n >/dev/null 2>&1 && nat_ok=1
+    iptables -t mangle -L SB_UDP_TRANSIT -n >/dev/null 2>&1 && mangle_ok=1
 
-# Делегируем работу init-скрипту (он всегда на месте и идемпотентен)
-if [ -x /opt/etc/init.d/S55singbox-tproxy.sh ]; then
-    /opt/etc/init.d/S55singbox-tproxy.sh restart >/dev/null 2>&1
-fi
+    if [ "$nat_ok" = "1" ] && [ "$mangle_ok" = "1" ]; then
+        logger -t singbox-ndm "netfilter rules OK (type=$type table=$table, attempt=$i)"
+        exit 0
+    fi
 
-logger -t singbox-ndm "netfilter rules restored (type=$type table=$table)"
+    sleep 2
+    if [ -x /opt/etc/init.d/S55singbox-tproxy.sh ]; then
+        /opt/etc/init.d/S55singbox-tproxy.sh start >/dev/null 2>&1
+    fi
+done
+
+logger -t singbox-ndm "netfilter rules NOT restored after 5 attempts (type=$type table=$table)"
 `
 	if err := os.MkdirAll("/opt/etc/ndm/netfilter.d", 0755); err != nil {
 		return err
@@ -198,8 +218,7 @@ logger -t singbox-ndm "netfilter rules restored (type=$type table=$table)"
 }
 
 // WriteTProxyInit — создаёт init-скрипт S55singbox-tproxy.sh.
-// Он применяет/снимает iptables-правила. Запуск sing-box — отдельный
-// init-скрипт S99singbox-manager.sh (его создаёт install.sh).
+// Он применяет/снимает iptables-правила.
 func WriteTProxyInit() error {
 	script := `#!/bin/sh
 # Применяет iptables-правила для Sing-box TProxy + REDIRECT.
