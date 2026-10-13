@@ -1,5 +1,5 @@
 #!/bin/sh
-# Установщик Sing-box Manager v4.2.3 для Keenetic (Entware).
+# Установщик Sing-box Manager v3.1.1 для Keenetic (Entware).
 
 set -e
 
@@ -30,23 +30,43 @@ done
 
 if [ "$HAS_TPROXY" -lt 2 ]; then
     echo ""
-    echo "⚠️  ВНИМАНИЕ: модули xt_TPROXY / xt_socket не найдены!"
-    echo "   Установи компонент «Модули ядра для Netfilter»."
+    echo "WARN: модули xt_TPROXY / xt_socket не найдены!"
+    echo "      Установи компонент 'Модули ядра для Netfilter'."
     echo ""
 fi
 
 ARCH=$(uname -m)
 case "$ARCH" in
-    aarch64|arm64) MANAGER_BIN="singbox-manager-arm64" ;;
-    mips)          MANAGER_BIN="singbox-manager-mipsle" ;;
+    aarch64|arm64)
+        MANAGER_BIN="singbox-manager-arm64"
+        SINGBOX_ARCH="linux-arm64"
+        ;;
+    mips|mips32|mipsel)
+        MANAGER_BIN="singbox-manager-mipsle"
+        SINGBOX_ARCH="linux-mipsle-softfloat"
+        ;;
     *)
         echo "ОШИБКА: неподдерживаемая архитектура: $ARCH"
         exit 1
         ;;
 esac
 
-echo "=== Sing-box Manager v4.2.3 Installer ==="
-echo "Архитектура: $ARCH -> $MANAGER_BIN"
+echo "=== Sing-box Manager v3.1.1 Installer ==="
+echo "Архитектура: $ARCH -> $MANAGER_BIN (Sing-box: $SINGBOX_ARCH)"
+
+LOADER=""
+for candidate in /opt/lib/ld-linux*.so* /opt/lib/ld-*.so*; do
+    if [ -f "$candidate" ]; then
+        LOADER="$candidate"
+        break
+    fi
+done
+
+if [ -z "$LOADER" ]; then
+    LOADER="/opt/lib/ld-linux.so.3"
+fi
+
+echo "Загрузчик: $LOADER"
 
 if [ -x "$INIT_PATH" ]; then
     echo "Останавливаем старую версию..."
@@ -86,7 +106,7 @@ echo "    OK: $MANAGER_BIN_PATH"
 if [ ! -f "$SINGBOX_BIN_PATH" ]; then
     echo ""
     echo "==> Скачиваем Sing-box 1.14.2 (официальный, SagerNet)"
-    SINGBOX_URL="https://github.com/SagerNet/sing-box/releases/download/v1.14.2/sing-box-1.14.2-linux-arm64.tar.gz"
+    SINGBOX_URL="https://github.com/SagerNet/sing-box/releases/download/v1.14.2/sing-box-1.14.2-${SINGBOX_ARCH}.tar.gz"
 
     if command -v curl >/dev/null 2>&1; then
         curl -L -o sing-box.tar.gz "$SINGBOX_URL"
@@ -103,11 +123,12 @@ if [ ! -f "$SINGBOX_BIN_PATH" ]; then
     fi
 
     tar xzf sing-box.tar.gz
-    cp sing-box-1.14.2-linux-arm64/sing-box "$SINGBOX_BIN_PATH"
-    cp sing-box-1.14.2-linux-arm64/libcronet.so "$DATA_DIR/" 2>/dev/null || true
+    SINGBOX_DIR="sing-box-1.14.2-${SINGBOX_ARCH}"
+    cp "$SINGBOX_DIR/sing-box" "$SINGBOX_BIN_PATH"
+    cp "$SINGBOX_DIR/libcronet.so" "$DATA_DIR/" 2>/dev/null || true
     chmod +x "$SINGBOX_BIN_PATH"
 
-    rm -rf sing-box.tar.gz sing-box-1.14.2-linux-arm64
+    rm -rf sing-box.tar.gz "$SINGBOX_DIR"
     echo "    OK: $SINGBOX_BIN_PATH"
 else
     echo ""
@@ -116,45 +137,43 @@ fi
 
 echo ""
 echo "==> Устанавливаем init-скрипт: $INIT_PATH"
-cat > "$INIT_PATH" << 'INIT_EOF'
+cat > "$INIT_PATH" << INIT_EOF
 #!/bin/sh
 BIN=/opt/bin/singbox-manager
 LOGFILE=/opt/var/log/singbox-manager.log
 ADDR=":9091"
 MARKER=/opt/etc/sing-box/vpn.disabled
 SINGBOX=/opt/etc/sing-box/sing-box
-LOADER=/opt/lib/ld-linux-aarch64.so.1
+LOADER=$LOADER
 CONFIG=/opt/etc/sing-box/config.d
 TPROXY_INIT=/opt/etc/init.d/S55singbox-tproxy.sh
 
-case "$1" in
+case "\$1" in
     start)
-        if ps -w | grep -v grep | grep -q "$BIN"; then
+        if ps -w | grep -v grep | grep -q "\$BIN"; then
             echo "singbox-manager уже запущен"
         else
             echo "Запуск singbox-manager..."
             mkdir -p /opt/var/log
-            $BIN -addr $ADDR > $LOGFILE 2>&1 &
+            \$BIN -addr \$ADDR > \$LOGFILE 2>&1 &
             sleep 3
-            if ! ps -w | grep -v grep | grep -q "$BIN"; then
+            if ! ps -w | grep -v grep | grep -q "\$BIN"; then
                 echo "ОШИБКА. Лог:"
-                cat $LOGFILE
+                cat \$LOGFILE
                 exit 1
             fi
             echo "OK"
         fi
 
-        # Автозапуск sing-box, если есть config.d и нет маркера.
-        if [ -d "$CONFIG" ] && [ ! -f "$MARKER" ]; then
+        if [ -d "\$CONFIG" ] && [ ! -f "\$MARKER" ]; then
             if ! ps -w | grep -v grep | grep -q "sing-box run"; then
                 echo "Автозапуск sing-box..."
-                $LOADER $SINGBOX run -C $CONFIG > /opt/var/log/sing-box.log 2>&1 &
+                \$LOADER \$SINGBOX run -C \$CONFIG > /opt/var/log/sing-box.log 2>&1 &
                 sleep 5
             fi
-            # Восстановить iptables-правила
-            if [ -x "$TPROXY_INIT" ] && { ! iptables -t nat -L SB_TCP -n >/dev/null 2>&1 || ! iptables -t mangle -L SB_UDP_TRANSIT -n >/dev/null 2>&1; }; then
+            if [ -x "\$TPROXY_INIT" ] && { ! iptables -t nat -L SB_TCP -n >/dev/null 2>&1 || ! iptables -t mangle -L SB_UDP_TRANSIT -n >/dev/null 2>&1; }; then
                 echo "Восстановление iptables-правил..."
-                $TPROXY_INIT start >/dev/null 2>&1
+                \$TPROXY_INIT start >/dev/null 2>&1
             fi
         fi
         ;;
@@ -165,12 +184,12 @@ case "$1" in
         echo "OK"
         ;;
     restart)
-        $0 stop
+        \$0 stop
         sleep 2
-        $0 start
+        \$0 start
         ;;
     status)
-        if ps -w | grep -v grep | grep -q "$BIN"; then
+        if ps -w | grep -v grep | grep -q "\$BIN"; then
             echo "singbox-manager работает"
         else
             echo "singbox-manager не запущен"
@@ -182,7 +201,7 @@ case "$1" in
         fi
         ;;
     *)
-        echo "Использование: $0 {start|stop|restart|status}"
+        echo "Использование: \$0 {start|stop|restart|status}"
         exit 1
         ;;
 esac
@@ -228,16 +247,18 @@ echo "==> Запускаем менеджер..."
 
 IP=$(ip addr show br0 2>/dev/null | grep "inet " | awk '{print $2}' | cut -d/ -f1 || echo "IP-роутера")
 echo ""
-echo "═══════════════════════════════════════════════════════════"
-echo "  Sing-box Manager v4.2.3 установлен и запущен!"
+echo "==========================================================="
+echo "  Sing-box Manager v3.1.1 установлен и запущен!"
 echo ""
 echo "  Открой в браузере:  http://$IP:9091"
 echo ""
 echo "  Смени пароль в Настройках после входа!"
-echo "═══════════════════════════════════════════════════════════"
+echo "==========================================================="
 echo ""
-echo "Новое в v4.2.3:"
-echo "  ✅ Автозапуск sing-box после перезагрузки"
-echo "  ✅ Watchdog с grace-period 60 сек при старте"
-echo "  ✅ Watchdog НЕ ставит маркер при падении sing-box"
-echo "  ✅ Все функции v4.2.0 / v4.2.1 / v4.2.2"
+echo "Новое в v3.1.1:"
+echo "  - Поддержка mipsle-softfloat (старые Keenetic)"
+echo "  - Автоопределение архитектуры и загрузчика"
+echo "  - Автозапуск sing-box после перезагрузки"
+echo "  - Watchdog с grace-period 60 сек при старте"
+echo "  - Watchdog НЕ ставит маркер при падении sing-box"
+echo "  - Все функции v3.1.0"
