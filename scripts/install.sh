@@ -1,13 +1,14 @@
 #!/bin/sh
-# Установщик Sing-box Manager v4.3.3 для Keenetic (Entware).
+# Установщик Sing-box Manager v4.3.4 для Keenetic (Entware).
 
 set -e
 
 REPO="vitosamin/singbox-manager"
-RELEASE_TAG="v4.3.3"
+RELEASE_TAG="v4.3.4"
 MANAGER_BIN_PATH="/opt/bin/singbox-manager"
 SINGBOX_BIN_PATH="/opt/etc/sing-box/sing-box"
 INIT_PATH="/opt/etc/init.d/S99singbox-manager"
+TPROXY_INIT_PATH="/opt/etc/init.d/S55singbox-tproxy.sh"
 DATA_DIR="/opt/etc/sing-box"
 CONFIG_D="${DATA_DIR}/config.d"
 TMP_DIR="/tmp"
@@ -18,10 +19,43 @@ if [ ! -d /opt/etc ]; then
     exit 1
 fi
 
-if ! command -v ndmc >/dev/null 2>&1; then
-    echo "ПРЕДУПРЕЖДЕНИЕ: ndmc не найден."
+# ============================================================
+# 1. Установка обязательных зависимостей через opkg
+# ============================================================
+echo ""
+echo "==> Устанавливаем зависимости (iptables, ipset, wget, curl)"
+opkg update >/dev/null 2>&1 || true
+
+install_pkg() {
+    PKG="$1"
+    if opkg list-installed 2>/dev/null | grep -q "^${PKG} "; then
+        echo "    [OK] $PKG уже установлен"
+    else
+        echo "    [..] Устанавливаем $PKG"
+        opkg install "$PKG" >/dev/null 2>&1 || \
+            opkg install "$PKG" 2>&1 | tail -3
+    fi
+}
+
+install_pkg iptables
+install_pkg ipset
+install_pkg libipset
+install_pkg libmnl
+install_pkg wget
+install_pkg wget-nossl
+install_pkg curl
+install_pkg ca-bundle
+install_pkg ca-certificates
+
+# Проверяем, что iptables реально есть
+if ! command -v iptables >/dev/null 2>&1; then
+    echo "ОШИБКА: iptables не установился. Установи компонент 'Модули ядра Netfilter' в KeeneticOS."
+    exit 1
 fi
 
+# ============================================================
+# 2. Проверка модулей ядра TPROXY
+# ============================================================
 KERNEL=$(uname -r)
 HAS_TPROXY=0
 for p in "/lib/modules/$KERNEL/xt_TPROXY.ko" "/lib/system-modules/xt_TPROXY.ko" \
@@ -32,8 +66,22 @@ done
 if [ "$HAS_TPROXY" -lt 2 ]; then
     echo ""
     echo "WARN: модули xt_TPROXY / xt_socket не найдены!"
-    echo "      Установи компонент 'Модули ядра для Netfilter'."
+    echo "      Установи компонент 'Модули ядра для Netfilter' в KeeneticOS."
     echo ""
+fi
+
+# Загружаем модули (если ещё не загружены)
+insmod xt_TPROXY 2>/dev/null || true
+insmod xt_socket 2>/dev/null || true
+insmod xt_nat 2>/dev/null || true
+insmod ip_set 2>/dev/null || true
+insmod xt_set 2>/dev/null || true
+
+# ============================================================
+# 3. Определение архитектуры
+# ============================================================
+if ! command -v ndmc >/dev/null 2>&1; then
+    echo "ПРЕДУПРЕЖДЕНИЕ: ndmc не найден."
 fi
 
 ARCH=$(uname -m)
@@ -52,7 +100,8 @@ case "$ARCH" in
         ;;
 esac
 
-echo "=== Sing-box Manager v4.3.3 Installer ==="
+echo ""
+echo "=== Sing-box Manager $RELEASE_TAG Installer ==="
 echo "Архитектура: $ARCH -> $MANAGER_BIN (Sing-box: $SINGBOX_ARCH)"
 
 LOADER=""
@@ -69,6 +118,9 @@ fi
 
 echo "Загрузчик: $LOADER"
 
+# ============================================================
+# 4. Остановка старых процессов
+# ============================================================
 if [ -x "$INIT_PATH" ]; then
     echo "Останавливаем старую версию..."
     "$INIT_PATH" stop 2>/dev/null || true
@@ -80,6 +132,9 @@ mkdir -p "$DATA_DIR"
 mkdir -p "$CONFIG_D"
 mkdir -p /opt/var/run /opt/var/log
 
+# ============================================================
+# 5. Скачивание менеджера
+# ============================================================
 echo ""
 echo "==> Скачиваем менеджер: $MANAGER_BIN"
 cd "$TMP_DIR"
@@ -104,6 +159,9 @@ mv singbox-manager.new "$MANAGER_BIN_PATH"
 chmod +x "$MANAGER_BIN_PATH"
 echo "    OK: $MANAGER_BIN_PATH"
 
+# ============================================================
+# 6. Скачивание sing-box
+# ============================================================
 if [ ! -f "$SINGBOX_BIN_PATH" ]; then
     echo ""
     echo "==> Скачиваем Sing-box (наш релиз $RELEASE_TAG, $SINGBOX_ARCH)"
@@ -136,6 +194,9 @@ else
     echo "==> Sing-box уже установлен: $SINGBOX_BIN_PATH"
 fi
 
+# ============================================================
+# 7. Init-скрипт менеджера
+# ============================================================
 echo ""
 echo "==> Устанавливаем init-скрипт: $INIT_PATH"
 cat > "$INIT_PATH" << INIT_EOF
@@ -147,7 +208,7 @@ MARKER=/opt/etc/sing-box/vpn.disabled
 SINGBOX=/opt/etc/sing-box/sing-box
 LOADER=$LOADER
 CONFIG=/opt/etc/sing-box/config.d
-TPROXY_INIT=/opt/etc/init.d/S55singbox-tproxy.sh
+TPROXY_INIT=$TPROXY_INIT_PATH
 
 case "\$1" in
     start)
@@ -172,9 +233,12 @@ case "\$1" in
                 \$LOADER \$SINGBOX run -C \$CONFIG > /opt/var/log/sing-box.log 2>&1 &
                 sleep 5
             fi
-            if [ -x "\$TPROXY_INIT" ] && { ! iptables -t nat -L SB_TCP -n >/dev/null 2>&1 || ! iptables -t mangle -L SB_UDP_TRANSIT -n >/dev/null 2>&1; }; then
-                echo "Восстановление iptables-правил..."
-                \$TPROXY_INIT start >/dev/null 2>&1
+            if [ -x "\$TPROXY_INIT" ]; then
+                if ! iptables -t nat -L SB_TCP -n >/dev/null 2>&1 || \
+                   ! iptables -t mangle -L SB_UDP_TRANSIT -n >/dev/null 2>&1; then
+                    echo "Восстановление iptables-правил..."
+                    \$TPROXY_INIT start >/dev/null 2>&1 || true
+                fi
             fi
         fi
         ;;
@@ -212,6 +276,9 @@ INIT_EOF
 
 chmod +x "$INIT_PATH"
 
+# ============================================================
+# 8. Cron-бэкап
+# ============================================================
 echo ""
 echo "==> Устанавливаем cron-бэкап state.json"
 CRONDAILY_DIR="/opt/etc/cron.daily"
@@ -242,6 +309,9 @@ if [ -x /opt/etc/init.d/S10cron ]; then
     /opt/etc/init.d/S10cron restart >/dev/null 2>&1 || true
 fi
 
+# ============================================================
+# 9. Запуск
+# ============================================================
 echo ""
 echo "==> Запускаем менеджер..."
 "$INIT_PATH" start
@@ -249,17 +319,19 @@ echo "==> Запускаем менеджер..."
 IP=$(ip addr show br0 2>/dev/null | grep "inet " | awk '{print $2}' | cut -d/ -f1 || echo "IP-роутера")
 echo ""
 echo "==========================================================="
-echo "  Sing-box Manager v4.3.3 установлен и запущен!"
+echo "  Sing-box Manager $RELEASE_TAG установлен и запущен!"
 echo ""
 echo "  Открой в браузере:  http://$IP:9091"
 echo ""
 echo "  Смени пароль в Настройках после входа!"
 echo "==========================================================="
 echo ""
-echo "Новое в v4.3.3:"
-echo "  - Поддержка mipsle-softfloat (старые Keenetic)"
-echo "  - Автоопределение архитектуры и загрузчика"
-echo "  - Автозапуск sing-box после перезагрузки"
-echo "  - Watchdog с grace-period 60 сек при старте"
-echo "  - Watchdog НЕ ставит маркер при падении sing-box"
-echo "  - Все функции v4.3.2"
+echo "Установленные зависимости:"
+for pkg in iptables ipset wget wget-nossl curl; do
+    if opkg list-installed 2>/dev/null | grep -q "^${pkg} "; then
+        ver=$(opkg list-installed 2>/dev/null | grep "^${pkg} " | awk '{print $3}')
+        echo "  [OK] $pkg $ver"
+    else
+        echo "  [--] $pkg (не установлен)"
+    fi
+done
