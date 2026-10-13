@@ -4,78 +4,75 @@ on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:
 
 permissions:
   contents: write
 
+env:
+  GOTOOLCHAIN: local
+
 jobs:
   build:
-    name: Build and Release
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Go
+      - name: Setup Go 1.22
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: '1.22'
           cache: true
 
       - name: Install dependencies
         run: go mod download
 
-      - name: Read version
-        id: version
-        run: echo "VERSION=$(cat VERSION)" >> $GITHUB_OUTPUT
-
-      - name: Build ARM64
-        env:
-          CGO_ENABLED: "0"
-          GOOS: linux
-          GOARCH: arm64
+      - name: Build amd64
         run: |
-          go build -trimpath -ldflags="-s -w -X main.Version=${{ steps.version.outputs.VERSION }}" -o dist/singbox-manager-arm64 ./cmd/manager
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+            -trimpath -ldflags "-s -w" \
+            -o dist/singbox-manager-amd64 ./cmd/manager
 
-      - name: Build AMD64
-        env:
-          CGO_ENABLED: "0"
-          GOOS: linux
-          GOARCH: amd64
+      - name: Build arm64
         run: |
-          go build -trimpath -ldflags="-s -w -X main.Version=${{ steps.version.outputs.VERSION }}" -o dist/singbox-manager-amd64 ./cmd/manager
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build \
+            -trimpath -ldflags "-s -w" \
+            -o dist/singbox-manager-arm64 ./cmd/manager
 
-      - name: Build MIPSLE
-        env:
-          CGO_ENABLED: "0"
-          GOOS: linux
-          GOARCH: mipsle
-          GOMIPS: softfloat
+      - name: Build mipsle (softfloat)
         run: |
-          go build -trimpath -ldflags="-s -w -X main.Version=${{ steps.version.outputs.VERSION }}" -o dist/singbox-manager-mipsle ./cmd/manager
+          CGO_ENABLED=0 GOOS=linux GOARCH=mipsle GOMIPS=softfloat go build \
+            -trimpath -ldflags "-s -w" \
+            -o dist/singbox-manager-mipsle ./cmd/manager
 
-      - name: Show binaries
+      - name: Verify binaries
         run: |
           ls -lh dist/
-          file dist/* || true
+          file dist/singbox-manager-amd64
+          file dist/singbox-manager-arm64
+          file dist/singbox-manager-mipsle
 
-      - name: Checksums
+      - name: Generate SHA256SUMS
         run: |
           cd dist
-          sha256sum singbox-manager-arm64 singbox-manager-amd64 singbox-manager-mipsle > SHA256SUMS
+          sha256sum singbox-manager-* > SHA256SUMS
           cat SHA256SUMS
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          name: "Sing-box Manager ${{ steps.version.outputs.VERSION }}"
-          body: "Release ${{ steps.version.outputs.VERSION }}. См. CHANGELOG.md в репозитории."
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body: |
+            Release ${{ github.ref_name }}.
+            См. CHANGELOG.md в репозитории.
           files: |
+            dist/singbox-manager-amd64
             dist/singbox-manager-arm64
             dist/singbox-manager-mipsle
-            dist/singbox-manager-amd64
             dist/SHA256SUMS
           draft: false
           prerelease: false
-          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
