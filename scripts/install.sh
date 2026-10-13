@@ -1,10 +1,10 @@
 #!/bin/sh
-# Установщик Sing-box Manager v4.3.4 для Keenetic (Entware).
+# Установщик Sing-box Manager v4.3.5 для Keenetic (Entware).
 
 set -e
 
 REPO="vitosamin/singbox-manager"
-RELEASE_TAG="v4.3.4"
+RELEASE_TAG="v4.3.5"
 MANAGER_BIN_PATH="/opt/bin/singbox-manager"
 SINGBOX_BIN_PATH="/opt/etc/sing-box/sing-box"
 INIT_PATH="/opt/etc/init.d/S99singbox-manager"
@@ -20,7 +20,7 @@ if [ ! -d /opt/etc ]; then
 fi
 
 # ============================================================
-# 1. Установка обязательных зависимостей через opkg
+# 1. Установка зависимостей через opkg
 # ============================================================
 echo ""
 echo "==> Устанавливаем зависимости (iptables, ipset, wget, curl)"
@@ -47,14 +47,13 @@ install_pkg curl
 install_pkg ca-bundle
 install_pkg ca-certificates
 
-# Проверяем, что iptables реально есть
 if ! command -v iptables >/dev/null 2>&1; then
     echo "ОШИБКА: iptables не установился. Установи компонент 'Модули ядра Netfilter' в KeeneticOS."
     exit 1
 fi
 
 # ============================================================
-# 2. Проверка модулей ядра TPROXY
+# 2. Модули ядра TPROXY
 # ============================================================
 KERNEL=$(uname -r)
 HAS_TPROXY=0
@@ -70,7 +69,6 @@ if [ "$HAS_TPROXY" -lt 2 ]; then
     echo ""
 fi
 
-# Загружаем модули (если ещё не загружены)
 insmod xt_TPROXY 2>/dev/null || true
 insmod xt_socket 2>/dev/null || true
 insmod xt_nat 2>/dev/null || true
@@ -78,12 +76,8 @@ insmod ip_set 2>/dev/null || true
 insmod xt_set 2>/dev/null || true
 
 # ============================================================
-# 3. Определение архитектуры
+# 3. Архитектура
 # ============================================================
-if ! command -v ndmc >/dev/null 2>&1; then
-    echo "ПРЕДУПРЕЖДЕНИЕ: ndmc не найден."
-fi
-
 ARCH=$(uname -m)
 case "$ARCH" in
     aarch64|arm64)
@@ -111,29 +105,22 @@ for candidate in /opt/lib/ld-linux*.so* /opt/lib/ld-*.so*; do
         break
     fi
 done
-
-if [ -z "$LOADER" ]; then
-    LOADER="/opt/lib/ld-linux.so.3"
-fi
-
+[ -z "$LOADER" ] && LOADER="/opt/lib/ld-linux.so.3"
 echo "Загрузчик: $LOADER"
 
 # ============================================================
 # 4. Остановка старых процессов
 # ============================================================
 if [ -x "$INIT_PATH" ]; then
-    echo "Останавливаем старую версию..."
     "$INIT_PATH" stop 2>/dev/null || true
 fi
 killall singbox-manager 2>/dev/null || true
 killall sing-box 2>/dev/null || true
 
-mkdir -p "$DATA_DIR"
-mkdir -p "$CONFIG_D"
-mkdir -p /opt/var/run /opt/var/log
+mkdir -p "$DATA_DIR" "$CONFIG_D" /opt/var/run /opt/var/log
 
 # ============================================================
-# 5. Скачивание менеджера
+# 5. Скачиваем менеджер
 # ============================================================
 echo ""
 echo "==> Скачиваем менеджер: $MANAGER_BIN"
@@ -145,14 +132,10 @@ if command -v curl >/dev/null 2>&1; then
 elif command -v wget >/dev/null 2>&1; then
     wget -O singbox-manager.new "$URL"
 else
-    echo "ОШИБКА: нет ни curl, ни wget"
-    exit 1
+    echo "ОШИБКА: нет ни curl, ни wget"; exit 1
 fi
 
-if [ ! -f singbox-manager.new ]; then
-    echo "ОШИБКА: не удалось скачать менеджер"
-    exit 1
-fi
+[ ! -f singbox-manager.new ] && { echo "ОШИБКА: менеджер не скачался"; exit 1; }
 
 chmod +x singbox-manager.new
 mv singbox-manager.new "$MANAGER_BIN_PATH"
@@ -160,24 +143,25 @@ chmod +x "$MANAGER_BIN_PATH"
 echo "    OK: $MANAGER_BIN_PATH"
 
 # ============================================================
-# 6. Скачивание sing-box
+# 6. Скачиваем sing-box С ОФИЦИАЛЬНОГО SagerNet
 # ============================================================
 if [ ! -f "$SINGBOX_BIN_PATH" ]; then
     echo ""
-    echo "==> Скачиваем Sing-box (наш релиз $RELEASE_TAG, $SINGBOX_ARCH)"
-    SINGBOX_URL="https://github.com/$REPO/releases/download/$RELEASE_TAG/sing-box-1.14.2-${SINGBOX_ARCH}.tar.gz"
+    echo "==> Скачиваем официальный Sing-box 1.14.2 (SagerNet, $SINGBOX_ARCH)"
+    SINGBOX_URL="https://github.com/SagerNet/sing-box/releases/download/v1.14.2/sing-box-1.14.2-${SINGBOX_ARCH}.tar.gz"
 
     if command -v curl >/dev/null 2>&1; then
         curl -L -o sing-box.tar.gz "$SINGBOX_URL"
-    elif command -v wget >/dev/null 2>&1; then
-        wget -O sing-box.tar.gz "$SINGBOX_URL"
     else
-        echo "ОШИБКА: нет ни curl, ни wget"
-        exit 1
+        wget -O sing-box.tar.gz "$SINGBOX_URL"
     fi
 
-    if [ ! -f sing-box.tar.gz ]; then
-        echo "ОШИБКА: не удалось скачать Sing-box"
+    [ ! -f sing-box.tar.gz ] && { echo "ОШИБКА: sing-box не скачался"; exit 1; }
+
+    SIZE=$(wc -c < sing-box.tar.gz)
+    if [ "$SIZE" -lt 100000 ]; then
+        echo "ОШИБКА: скачался слишком маленький файл ($SIZE байт), вероятно 404"
+        rm -f sing-box.tar.gz
         exit 1
     fi
 
@@ -220,9 +204,7 @@ case "\$1" in
             \$BIN -addr \$ADDR > \$LOGFILE 2>&1 &
             sleep 3
             if ! ps -w | grep -v grep | grep -q "\$BIN"; then
-                echo "ОШИБКА. Лог:"
-                cat \$LOGFILE
-                exit 1
+                echo "ОШИБКА. Лог:"; cat \$LOGFILE; exit 1
             fi
             echo "OK"
         fi
@@ -248,29 +230,13 @@ case "\$1" in
         killall sing-box 2>/dev/null
         echo "OK"
         ;;
-    restart)
-        \$0 stop
-        sleep 2
-        \$0 start
-        ;;
+    restart) \$0 stop; sleep 2; \$0 start ;;
     status)
-        if ps -w | grep -v grep | grep -q "\$BIN"; then
-            echo "singbox-manager работает"
-        else
-            echo "singbox-manager не запущен"
-        fi
-        if ps -w | grep -v grep | grep -q "sing-box run"; then
-            echo "sing-box работает"
-        else
-            echo "sing-box не запущен"
-        fi
+        ps -w | grep -v grep | grep -q "\$BIN" && echo "singbox-manager работает" || echo "singbox-manager не запущен"
+        ps -w | grep -v grep | grep -q "sing-box run" && echo "sing-box работает" || echo "sing-box не запущен"
         ;;
-    *)
-        echo "Использование: \$0 {start|stop|restart|status}"
-        exit 1
-        ;;
+    *) echo "Использование: \$0 {start|stop|restart|status}"; exit 1 ;;
 esac
-
 exit 0
 INIT_EOF
 
@@ -279,30 +245,22 @@ chmod +x "$INIT_PATH"
 # ============================================================
 # 8. Cron-бэкап
 # ============================================================
-echo ""
-echo "==> Устанавливаем cron-бэкап state.json"
 CRONDAILY_DIR="/opt/etc/cron.daily"
 if [ -d "$CRONDAILY_DIR" ] || mkdir -p "$CRONDAILY_DIR" 2>/dev/null; then
     cat > "$CRONDAILY_DIR/backup-state" << 'CRON_EOF'
 #!/bin/sh
 BACKUP_DIR="/opt/etc/sing-box/backups"
 mkdir -p "$BACKUP_DIR"
-
 DATE=$(date +%Y%m%d)
 STATE_SRC="/opt/etc/sing-box/state.json"
 CONFIG_SRC="/opt/etc/sing-box/config.d"
-
 [ -f "$STATE_SRC" ] && cp "$STATE_SRC" "$BACKUP_DIR/state-$DATE.json"
 [ -d "$CONFIG_SRC" ] && tar czf "$BACKUP_DIR/config-$DATE.tar.gz" -C "$(dirname "$CONFIG_SRC")" "$(basename "$CONFIG_SRC")" 2>/dev/null
-
 find "$BACKUP_DIR" -name "state-*.json" -mtime +7 -delete 2>/dev/null
 find "$BACKUP_DIR" -name "config-*.tar.gz" -mtime +7 -delete 2>/dev/null
-
 exit 0
 CRON_EOF
-
     chmod +x "$CRONDAILY_DIR/backup-state"
-    echo "    OK: $CRONDAILY_DIR/backup-state"
 fi
 
 if [ -x /opt/etc/init.d/S10cron ]; then
@@ -320,18 +278,5 @@ IP=$(ip addr show br0 2>/dev/null | grep "inet " | awk '{print $2}' | cut -d/ -f
 echo ""
 echo "==========================================================="
 echo "  Sing-box Manager $RELEASE_TAG установлен и запущен!"
-echo ""
-echo "  Открой в браузере:  http://$IP:9091"
-echo ""
-echo "  Смени пароль в Настройках после входа!"
+echo "  Открой: http://$IP:9091"
 echo "==========================================================="
-echo ""
-echo "Установленные зависимости:"
-for pkg in iptables ipset wget wget-nossl curl; do
-    if opkg list-installed 2>/dev/null | grep -q "^${pkg} "; then
-        ver=$(opkg list-installed 2>/dev/null | grep "^${pkg} " | awk '{print $3}')
-        echo "  [OK] $pkg $ver"
-    else
-        echo "  [--] $pkg (не установлен)"
-    fi
-done
