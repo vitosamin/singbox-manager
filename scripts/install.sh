@@ -1,9 +1,10 @@
 #!/bin/sh
-# Установщик Sing-box Manager v3.1.1 для Keenetic (Entware).
+# Установщик Sing-box Manager v4.3.3 для Keenetic (Entware).
 
 set -e
 
 REPO="vitosamin/singbox-manager"
+RELEASE_TAG="v4.3.3"
 MANAGER_BIN_PATH="/opt/bin/singbox-manager"
 SINGBOX_BIN_PATH="/opt/etc/sing-box/sing-box"
 INIT_PATH="/opt/etc/init.d/S99singbox-manager"
@@ -51,7 +52,7 @@ case "$ARCH" in
         ;;
 esac
 
-echo "=== Sing-box Manager v3.1.1 Installer ==="
+echo "=== Sing-box Manager v4.3.3 Installer ==="
 echo "Архитектура: $ARCH -> $MANAGER_BIN (Sing-box: $SINGBOX_ARCH)"
 
 LOADER=""
@@ -82,7 +83,7 @@ mkdir -p /opt/var/run /opt/var/log
 echo ""
 echo "==> Скачиваем менеджер: $MANAGER_BIN"
 cd "$TMP_DIR"
-URL="https://github.com/$REPO/releases/latest/download/$MANAGER_BIN"
+URL="https://github.com/$REPO/releases/download/$RELEASE_TAG/$MANAGER_BIN"
 
 if command -v curl >/dev/null 2>&1; then
     curl -L -o singbox-manager.new "$URL"
@@ -105,8 +106,8 @@ echo "    OK: $MANAGER_BIN_PATH"
 
 if [ ! -f "$SINGBOX_BIN_PATH" ]; then
     echo ""
-    echo "==> Скачиваем Sing-box 1.14.2 (официальный, SagerNet)"
-    SINGBOX_URL="https://github.com/SagerNet/sing-box/releases/download/v1.14.2/sing-box-1.14.2-${SINGBOX_ARCH}.tar.gz"
+    echo "==> Скачиваем Sing-box (наш релиз $RELEASE_TAG, $SINGBOX_ARCH)"
+    SINGBOX_URL="https://github.com/$REPO/releases/download/$RELEASE_TAG/sing-box-1.14.2-${SINGBOX_ARCH}.tar.gz"
 
     if command -v curl >/dev/null 2>&1; then
         curl -L -o sing-box.tar.gz "$SINGBOX_URL"
@@ -248,17 +249,17 @@ echo "==> Запускаем менеджер..."
 IP=$(ip addr show br0 2>/dev/null | grep "inet " | awk '{print $2}' | cut -d/ -f1 || echo "IP-роутера")
 echo ""
 echo "==========================================================="
-echo "  Sing-box Manager v3.1.1 установлен и запущен!"
+echo "  Sing-box Manager v4.3.3 установлен и запущен!"
 echo ""
 echo "  Открой в браузере:  http://$IP:9091"
 echo ""
 echo "  Смени пароль в Настройках после входа!"
 echo "==========================================================="
 echo ""
-echo "Новое в v3.1.1:"
+echo "Новое в v4.3.3:"
 echo "  - Поддержка mipsle-softfloat (старые Keenetic)"
 echo "  - Автоопределение архитектуры и загрузчика"
 echo "  - Автозапуск sing-box после перезагрузки"
 echo "  - Watchdog с grace-period 60 сек при старте"
 echo "  - Watchdog НЕ ставит маркер при падении sing-box"
-echo "  - Все функции v3.1.0"
+echo "  - Все функции v4.3.2"
