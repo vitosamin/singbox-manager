@@ -1,8 +1,5 @@
 name: Release
 
-env:
-  GOTOOLCHAIN: local
-
 on:
   push:
     tags:
