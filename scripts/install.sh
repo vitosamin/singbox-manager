@@ -1,10 +1,10 @@
 #!/bin/sh
-# Установщик Sing-box Manager v4.3.7 для Keenetic (Entware).
+# Установщик Sing-box Manager v4.3.8 для Keenetic (Entware).
 
 set -e
 
 REPO="vitosamin/singbox-manager"
-RELEASE_TAG="v4.3.7"
+RELEASE_TAG="v4.3.8"
 MANAGER_BIN_PATH="/opt/bin/singbox-manager"
 SINGBOX_BIN_PATH="/opt/etc/sing-box/sing-box"
 INIT_PATH="/opt/etc/init.d/S99singbox-manager"
@@ -18,7 +18,7 @@ LOGDIR="/tmp/singbox-logs"
 TMP_DIR="/tmp"
 MARKER="/opt/etc/sing-box/vpn.disabled"
 
-# Включить cron-watchdog? 0 = нет, 1 = да.
+# Cron-watchdog: 0 = отключён (по умолчанию), 1 = включён
 ENABLE_CRON_WATCHDOG=0
 
 if [ ! -d /opt/etc ]; then
@@ -189,7 +189,7 @@ else
 fi
 
 # ============================================================
-# 8. Init-скрипт менеджера (с автозапуском мониторинга)
+# 8. Init-скрипт менеджера
 # ============================================================
 echo ""
 echo "==> Устанавливаем init-скрипт: $INIT_PATH"
@@ -213,7 +213,17 @@ ensure_logdir() {
 start_monitor() {
     if ! ps -w | grep -v grep | grep -q singbox-monitor; then
         ensure_logdir
-        setsid "\$MONITOR" >/dev/null 2>&1 &
+        \$MONITOR </dev/null >/dev/null 2>&1 &
+    fi
+}
+
+apply_tproxy() {
+    if [ -x "\$TPROXY_INIT" ]; then
+        if ! iptables -t nat -C PREROUTING -j SB_TCP >/dev/null 2>&1 || \
+           ! iptables -t mangle -C PREROUTING -p udp -j SB_UDP_TRANSIT >/dev/null 2>&1; then
+            echo "Применение iptables-правил..."
+            "\$TPROXY_INIT" start >/dev/null 2>&1 || true
+        fi
     fi
 }
 
@@ -239,13 +249,7 @@ case "\$1" in
                 \$LOADER \$SINGBOX run -C \$CONFIG > /tmp/singbox-logs/sing-box.log 2>&1 &
                 sleep 5
             fi
-            if [ -x "\$TPROXY_INIT" ]; then
-                if ! iptables -t nat -L SB_TCP -n >/dev/null 2>&1 || \
-                   ! iptables -t mangle -S SB_UDP_TRANSIT >/dev/null 2>&1; then
-                    echo "Применение iptables-правил..."
-                    \$TPROXY_INIT >/dev/null 2>&1 || true
-                fi
-            fi
+            apply_tproxy
         fi
 
         start_monitor
@@ -271,13 +275,13 @@ INIT_EOF
 chmod +x "$INIT_PATH"
 
 # ============================================================
-# 9. TPROXY init-скрипт
+# 9. TPROXY init-скрипт (TCP→REDIRECT, UDP→TPROXY)
 # ============================================================
 echo ""
 echo "==> Устанавливаем TPROXY-скрипт: $TPROXY_INIT_PATH"
 cat > "$TPROXY_INIT_PATH" << 'TPROXY_EOF'
 #!/bin/sh
-set -e
+# Sing-box: TCP → REDIRECT :1082 (nat), UDP → TPROXY :1081 (mangle)
 TPROXY_PORT=1081
 REDIRECT_PORT=1082
 FW_MARK=0x1
@@ -287,44 +291,92 @@ for mod in xt_TPROXY xt_socket xt_nat xt_REDIRECT ip_set xt_set; do
     insmod "$mod" 2>/dev/null || true
 done
 
-iptables -t nat -D PREROUTING -j SB_TCP 2>/dev/null || true
-iptables -t mangle -D PREROUTING -j SB_UDP_TRANSIT 2>/dev/null || true
-iptables -t nat -F SB_TCP 2>/dev/null || true
-iptables -t mangle -F SB_UDP_TRANSIT 2>/dev/null || true
-iptables -t nat -X SB_TCP 2>/dev/null || true
-iptables -t mangle -X SB_UDP_TRANSIT 2>/dev/null || true
+apply_rules() {
+    # Удаляем все старые ссылки из PREROUTING
+    while iptables -t nat -D PREROUTING -j SB_TCP 2>/dev/null; do :; done
+    while iptables -t nat -D PREROUTING -i br0 -j SB_TCP 2>/dev/null; do :; done
+    while iptables -t nat -D PREROUTING -i nwg0 -j SB_TCP 2>/dev/null; do :; done
+    while iptables -t mangle -D PREROUTING -p udp -j SB_UDP_TRANSIT 2>/dev/null; do :; done
+    while iptables -t mangle -D PREROUTING -p tcp -j SB_TCP_TPROXY 2>/dev/null; do :; done
 
-iptables -t nat -N SB_TCP
-for net in 0.0.0.0/8 10.0.0.0/8 127.0.0.0/8 172.16.0.0/12 192.168.0.0/16 224.0.0.0/4 255.255.255.255/32; do
-    iptables -t nat -A SB_TCP -d "$net" -j RETURN
-done
-iptables -t nat -A SB_TCP -p tcp -m mark --mark "$FW_MARK" -j RETURN
-iptables -t nat -A SB_TCP -p tcp -j REDIRECT --to-ports "$REDIRECT_PORT"
-iptables -t nat -I PREROUTING 1 -j SB_TCP
+    # Удаляем старую mangle-TCP-цепочку (от экспериментов)
+    iptables -t mangle -F SB_TCP_TPROXY 2>/dev/null || true
+    iptables -t mangle -X SB_TCP_TPROXY 2>/dev/null || true
 
-iptables -t mangle -N SB_UDP_TRANSIT
-for net in 0.0.0.0/8 10.0.0.0/8 127.0.0.0/8 172.16.0.0/12 192.168.0.0/16 224.0.0.0/4 255.255.255.255/32; do
-    iptables -t mangle -A SB_UDP_TRANSIT -d "$net" -j RETURN
-done
-iptables -t mangle -A SB_UDP_TRANSIT -p udp --dport 53 -j RETURN
-iptables -t mangle -A SB_UDP_TRANSIT -p udp --dport 67:68 -j RETURN
-iptables -t mangle -A SB_UDP_TRANSIT -p udp -m mark --mark "$FW_MARK" -j RETURN
-iptables -t mangle -A SB_UDP_TRANSIT -p udp -j TPROXY --on-port "$TPROXY_PORT" --tproxy-mark "$FW_MARK"
-iptables -t mangle -I PREROUTING 1 -p udp -j SB_UDP_TRANSIT
+    # --- TCP (nat REDIRECT) ---
+    iptables -t nat -N SB_TCP 2>/dev/null || true
+    iptables -t nat -F SB_TCP
+    for net in 0.0.0.0/8 10.0.0.0/8 127.0.0.0/8 172.16.0.0/12 192.168.0.0/16 224.0.0.0/4 255.255.255.255/32; do
+        iptables -t nat -A SB_TCP -d "$net" -j RETURN
+    done
+    iptables -t nat -A SB_TCP -p tcp -m mark --mark "$FW_MARK" -j RETURN
+    iptables -t nat -A SB_TCP -p tcp -j REDIRECT --to-ports "$REDIRECT_PORT"
+    iptables -t nat -I PREROUTING 1 -j SB_TCP
 
-ip rule del fwmark "$FW_MARK" lookup "$ROUTE_TABLE" 2>/dev/null || true
-ip rule add fwmark "$FW_MARK" lookup "$ROUTE_TABLE"
-ip route flush table "$ROUTE_TABLE" 2>/dev/null || true
-ip route add local default dev lo table "$ROUTE_TABLE"
+    # --- UDP (mangle TPROXY) ---
+    iptables -t mangle -N SB_UDP_TRANSIT 2>/dev/null || true
+    iptables -t mangle -F SB_UDP_TRANSIT
+    for net in 0.0.0.0/8 10.0.0.0/8 127.0.0.0/8 172.16.0.0/12 192.168.0.0/16 224.0.0.0/4 255.255.255.255/32; do
+        iptables -t mangle -A SB_UDP_TRANSIT -d "$net" -j RETURN
+    done
+    iptables -t mangle -A SB_UDP_TRANSIT -p udp --dport 53 -j RETURN
+    iptables -t mangle -A SB_UDP_TRANSIT -p udp --dport 67:68 -j RETURN
+    iptables -t mangle -A SB_UDP_TRANSIT -p udp -m mark --mark "$FW_MARK" -j RETURN
+    iptables -t mangle -A SB_UDP_TRANSIT -p udp -j TPROXY --on-port "$TPROXY_PORT" --tproxy-mark "$FW_MARK"
+    iptables -t mangle -I PREROUTING 1 -p udp -j SB_UDP_TRANSIT
 
-echo "OK: TCP -> REDIRECT :$REDIRECT_PORT, UDP -> TPROXY :$TPROXY_PORT"
+    # --- Policy routing ---
+    ip rule del fwmark "$FW_MARK" lookup "$ROUTE_TABLE" 2>/dev/null || true
+    ip rule add fwmark "$FW_MARK" lookup "$ROUTE_TABLE"
+    ip route flush table "$ROUTE_TABLE" 2>/dev/null || true
+    ip route add local default dev lo table "$ROUTE_TABLE"
+
+    # Опционально: сброс conntrack (Keenetic)
+    if [ -w /proc/sys/net/netfilter/nf_conntrack_sweep ]; then
+        echo 1 > /proc/sys/net/netfilter/nf_conntrack_sweep 2>/dev/null || true
+    fi
+}
+
+remove_rules() {
+    while iptables -t nat -D PREROUTING -j SB_TCP 2>/dev/null; do :; done
+    while iptables -t mangle -D PREROUTING -p udp -j SB_UDP_TRANSIT 2>/dev/null; do :; done
+    iptables -t nat -F SB_TCP 2>/dev/null || true
+    iptables -t mangle -F SB_UDP_TRANSIT 2>/dev/null || true
+    ip rule del fwmark "$FW_MARK" lookup "$ROUTE_TABLE" 2>/dev/null || true
+    ip route flush table "$ROUTE_TABLE" 2>/dev/null || true
+}
+
+case "$1" in
+    start)
+        apply_rules
+        echo "SB_TCP installed"
+        echo "SB_UDP_TRANSIT installed"
+        echo "OK: TCP -> REDIRECT :$REDIRECT_PORT, UDP -> TPROXY :$TPROXY_PORT"
+        ;;
+    stop)
+        remove_rules
+        echo "OK: правила удалены"
+        ;;
+    restart)
+        $0 stop; sleep 1; $0 start
+        ;;
+    status)
+        iptables -t nat -C PREROUTING -j SB_TCP >/dev/null 2>&1 && echo "SB_TCP: активны" || echo "SB_TCP: отсутствуют"
+        iptables -t mangle -C PREROUTING -p udp -j SB_UDP_TRANSIT >/dev/null 2>&1 && echo "SB_UDP_TRANSIT: активны" || echo "SB_UDP_TRANSIT: отсутствуют"
+        ;;
+    *)
+        # Обратная совместимость: без аргумента делаем start
+        apply_rules
+        echo "OK: TCP -> REDIRECT :$REDIRECT_PORT, UDP -> TPROXY :$TPROXY_PORT"
+        ;;
+esac
 exit 0
 TPROXY_EOF
 
 chmod +x "$TPROXY_INIT_PATH"
 
 # ============================================================
-# 10. NDMS-хук (пишет в RAM)
+# 10. NDMS-хук (с защитой от цикла)
 # ============================================================
 echo ""
 echo "==> Устанавливаем NDMS-хук: $NDMS_HOOK_PATH"
@@ -339,14 +391,23 @@ MARKER=/opt/etc/sing-box/vpn.disabled
 TPROXY_INIT=/opt/etc/init.d/S55singbox-tproxy.sh
 
 [ -d "$LOGDIR" ] || mkdir -p "$LOGDIR"
-echo "$(date '+%Y-%m-%d %H:%M:%S') table=$table" >> "$LOGFILE"
-
 [ -f "$MARKER" ] && exit 0
 [ ! -x "$TPROXY_INIT" ] && exit 0
 
+# Защита от цикла: если цепочки уже стоят — выходим молча
+NEED_RESTORE=0
+iptables -t nat -C PREROUTING -j SB_TCP >/dev/null 2>&1 || NEED_RESTORE=1
+iptables -t mangle -C PREROUTING -p udp -j SB_UDP_TRANSIT >/dev/null 2>&1 || NEED_RESTORE=1
+
+if [ "$NEED_RESTORE" -eq 0 ]; then
+    exit 0
+fi
+
+echo "$(date '+%Y-%m-%d %H:%M:%S') цепочки пропали (table=$table) → восстанавливаем" >> "$LOGFILE"
+
 (
-    sleep 3
-    "$TPROXY_INIT" >/dev/null 2>&1 || true
+    sleep 2
+    "$TPROXY_INIT" start >/dev/null 2>&1 || true
     echo "$(date '+%Y-%m-%d %H:%M:%S') восстановлены (table=$table)" >> "$LOGFILE"
 ) &
 
@@ -358,7 +419,7 @@ HOOK_EOF
 chmod +x "$NDMS_HOOK_PATH"
 
 # ============================================================
-# 11. Watchdog (пишет в RAM, по умолчанию без cron)
+# 11. Watchdog (RAM)
 # ============================================================
 echo ""
 echo "==> Устанавливаем watchdog: $WATCHDOG_PATH"
@@ -382,14 +443,14 @@ if ! ps -w | grep -v grep | grep -q "sing-box run"; then
     /opt/etc/init.d/S99singbox-manager start >/dev/null 2>&1
 fi
 
-if ! iptables -t nat -L SB_TCP -n >/dev/null 2>&1; then
+if ! iptables -t nat -C PREROUTING -j SB_TCP >/dev/null 2>&1; then
     echo "$NOW: SB_TCP пропал → восстановление" >> "$LOG"
-    /opt/etc/init.d/S55singbox-tproxy.sh >/dev/null 2>&1
+    /opt/etc/init.d/S55singbox-tproxy.sh start >/dev/null 2>&1
 fi
 
-if ! iptables -t mangle -S SB_UDP_TRANSIT >/dev/null 2>&1; then
+if ! iptables -t mangle -C PREROUTING -p udp -j SB_UDP_TRANSIT >/dev/null 2>&1; then
     echo "$NOW: SB_UDP_TRANSIT пропал → восстановление" >> "$LOG"
-    /opt/etc/init.d/S55singbox-tproxy.sh >/dev/null 2>&1
+    /opt/etc/init.d/S55singbox-tproxy.sh start >/dev/null 2>&1
 fi
 
 [ -f "$LOG" ] && tail -500 "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"
@@ -399,7 +460,7 @@ WD_EOF
 chmod +x "$WATCHDOG_PATH"
 
 # ============================================================
-# 12. Monitor (пишет в RAM, живёт в фоне)
+# 12. Monitor (RAM)
 # ============================================================
 echo ""
 echo "==> Устанавливаем мониторинг: $MONITOR_PATH"
@@ -411,8 +472,8 @@ LOG=$LOGDIR/monitor.log
 
 while true; do
     TS=$(date "+%Y-%m-%d %H:%M:%S")
-    TCP=$(iptables -t nat -L PREROUTING -n 2>/dev/null | grep -c SB_TCP)
-    UDP=$(iptables -t mangle -S PREROUTING 2>/dev/null | grep -c SB_UDP_TRANSIT)
+    TCP=$(iptables -t nat -C PREROUTING -j SB_TCP >/dev/null 2>&1 && echo 1 || echo 0)
+    UDP=$(iptables -t mangle -C PREROUTING -p udp -j SB_UDP_TRANSIT >/dev/null 2>&1 && echo 1 || echo 0)
     RULE=$(ip rule show 2>/dev/null | grep -c "fwmark 0x1")
     echo "$TS TCP=$TCP UDP=$UDP RULE=$RULE" >> "$LOG"
     [ -f "$LOG" ] && tail -2000 "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"
@@ -460,7 +521,7 @@ else
 fi
 
 # ============================================================
-# 14. Cron-бэкап state.json (в RAM-логи не пишем, только backup)
+# 14. Cron-бэкап
 # ============================================================
 CRONDAILY_DIR="/opt/etc/cron.daily"
 if [ -d "$CRONDAILY_DIR" ] || mkdir -p "$CRONDAILY_DIR" 2>/dev/null; then
@@ -487,7 +548,7 @@ echo "==> Запускаем менеджер..."
 
 echo ""
 echo "==> Применяем TPROXY-правила..."
-"$TPROXY_INIT_PATH" || true
+"$TPROXY_INIT_PATH" start || true
 
 IP=$(ip addr show br0 2>/dev/null | grep "inet " | awk '{print $2}' | cut -d/ -f1 || echo "IP-роутера")
 echo ""
@@ -496,13 +557,10 @@ echo "  Sing-box Manager $RELEASE_TAG установлен и запущен!"
 echo ""
 echo "  Открой: http://$IP:9091"
 echo ""
-echo "  Логи (в RAM, не изнашивают флешку):"
-echo "    /tmp/singbox-logs/manager.log   — менеджер"
-echo "    /tmp/singbox-logs/sing-box.log  — sing-box"
-echo "    /tmp/singbox-logs/hook.log      — NDMS-хук"
-echo "    /tmp/singbox-logs/watchdog.log  — watchdog"
-echo "    /tmp/singbox-logs/monitor.log   — мониторинг правил"
-echo ""
-echo "  Проверить состояние:"
-echo "    cat /tmp/singbox-logs/monitor.log | tail -20"
+echo "  Логи (в RAM):"
+echo "    /tmp/singbox-logs/manager.log"
+echo "    /tmp/singbox-logs/sing-box.log"
+echo "    /tmp/singbox-logs/hook.log"
+echo "    /tmp/singbox-logs/monitor.log"
+echo "    /tmp/singbox-logs/watchdog.log"
 echo "==========================================================="
