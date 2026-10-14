@@ -4,7 +4,7 @@
 set -e
 
 REPO="vitosamin/singbox-manager"
-RELEASE_TAG="v4.4.2"
+RELEASE_TAG="v4.4.4"
 MANAGER_BIN_PATH="/opt/bin/singbox-manager"
 SINGBOX_BIN_PATH="/opt/etc/sing-box/sing-box"
 INIT_PATH="/opt/etc/init.d/S99singbox-manager"
@@ -447,9 +447,17 @@ if ! ps -w | grep -v grep | grep -q "/opt/bin/singbox-manager"; then
     /opt/etc/init.d/S99singbox-manager start >/dev/null 2>&1
 fi
 
+# 1. sing-box мёртв → сначала снять правила (защита от black hole)
 if ! ps -w | grep -v grep | grep -q "sing-box run"; then
-    echo "$NOW: sing-box упал → перезапуск" >> "$LOG"
+    if iptables -t nat -S PREROUTING 2>/dev/null | grep -q 'SB_TCP' || \
+       iptables -t mangle -S PREROUTING 2>/dev/null | grep -q 'SB_UDP_TRANSIT'; then
+        echo "$NOW: sing-box мёртв → снимаю правила" >> "$LOG"
+        /opt/etc/init.d/S55singbox-tproxy.sh stop >/dev/null 2>&1 || true
+    fi
+    echo "$NOW: sing-box мёртв → перезапуск S99" >> "$LOG"
     /opt/etc/init.d/S99singbox-manager start >/dev/null 2>&1
+    [ -f "$LOG" ] && tail -500 "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"
+    exit 0
 fi
 
 if ! iptables -t nat -C PREROUTING -j SB_TCP >/dev/null 2>&1; then
@@ -481,7 +489,7 @@ LOG=$LOGDIR/monitor.log
 
 while true; do
     TS=$(date "+%Y-%m-%d %H:%M:%S")
-    TCP=$(iptables -t nat -C PREROUTING -j SB_TCP >/dev/null 2>&1 && echo 1 || echo 0)
+    TCP_N=$(iptables -t nat -S PREROUTING 2>/dev/null | grep -c 'SB_TCP'); [ "$TCP_N" -gt 0 ] && TCP=1 || TCP=0
     UDP=$(iptables -t mangle -C PREROUTING -p udp -j SB_UDP_TRANSIT >/dev/null 2>&1 && echo 1 || echo 0)
     RULE=$(ip rule show 2>/dev/null | grep -c "fwmark 0x1")
     echo "$TS TCP=$TCP UDP=$UDP RULE=$RULE" >> "$LOG"
@@ -499,8 +507,12 @@ if [ "$ENABLE_CRON_WATCHDOG" -eq 1 ]; then
     echo ""
     echo "==> Включаем cron-watchdog"
     mkdir -p /opt/etc/cron.d
-    echo '*/5 * * * * root /opt/bin/singbox-watchdog.sh' > /opt/etc/cron.d/singbox-watchdog
-    chmod 644 /opt/etc/cron.d/singbox-watchdog
+    mkdir -p /opt/var/spool/cron/crontabs
+    cat > /opt/var/spool/cron/crontabs/root << 'CRONTAB_EOF'
+* * * * * /opt/bin/singbox-watchdog.sh
+CRONTAB_EOF
+    chmod 600 /opt/var/spool/cron/crontabs/root
+    chown root:root /opt/var/spool/cron/crontabs/root
 
     if [ ! -x /opt/etc/init.d/S10cron ]; then
         cat > /opt/etc/init.d/S10cron << 'CRON_EOF'
@@ -509,7 +521,7 @@ case "$1" in
     start)
         ps -w | grep -v grep | grep -q crond && echo "crond уже запущен" || {
             echo "Запуск crond..."
-            crond -c /opt/etc/cron.d -l 8
+            crond -c /opt/var/spool/cron/crontabs -l 8
             sleep 1
             ps -w | grep -v grep | grep -q crond && echo "OK" || echo "FAIL"
         }
@@ -568,11 +580,17 @@ echo "==> Устанавливаем fs.d хук автозапуска"
 mkdir -p /opt/etc/ndm/fs.d/
 cat > /opt/etc/ndm/fs.d/100-singbox-manager.sh << 'FS_EOF'
 #!/bin/sh
-# Keenetic вызывает при монтировании USB с Entware
+# Keenetic может вызвать несколько раз подряд — lock защищает от race
+LOCK=/tmp/singbox-autostart.lock
+[ -f "$LOCK" ] && exit 0
+touch "$LOCK"
+
 (
-    sleep 30
+    sleep 15
     [ -x /opt/etc/init.d/S99singbox-manager ] && \
         /opt/etc/init.d/S99singbox-manager start > /tmp/singbox-logs/autostart.log 2>&1
+    sleep 300
+    rm -f "$LOCK"
 ) &
 exit 0
 FS_EOF
@@ -594,7 +612,7 @@ echo "    OK: cron.d/singbox-watchdog"
 # Запуск crond
 if ! ps -w | grep -v grep | grep -q crond; then
     echo "==> Запуск crond"
-    crond -c /opt/etc/cron.d -l 8
+    crond -c /opt/var/spool/cron/crontabs -l 8
     sleep 1
 fi
 ps -w | grep -v grep | grep -q crond && echo "    OK: crond запущен" || echo "    FAIL: crond не запущен"
