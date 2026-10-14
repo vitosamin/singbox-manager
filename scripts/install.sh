@@ -53,6 +53,7 @@ install_pkg wget-nossl
 install_pkg curl
 install_pkg ca-bundle
 install_pkg ca-certificates
+install_pkg cron
 
 if ! command -v iptables >/dev/null 2>&1; then
     echo "ОШИБКА: iptables не установился."
@@ -246,7 +247,7 @@ case "\$1" in
         if [ -d "\$CONFIG" ] && [ ! -f "\$MARKER" ]; then
             if ! ps -w | grep -v grep | grep -q "sing-box run"; then
                 echo "Автозапуск sing-box..."
-                \$LOADER \$SINGBOX run -C \$CONFIG > /tmp/singbox-logs/sing-box.log 2>&1 &
+                \$SINGBOX run -C \$CONFIG > /tmp/singbox-logs/sing-box.log 2>&1 &
                 sleep 5
             fi
             apply_tproxy
@@ -549,6 +550,46 @@ echo "==> Запускаем менеджер..."
 echo ""
 echo "==> Применяем TPROXY-правила..."
 "$TPROXY_INIT_PATH" start || true
+
+
+# ============================================================
+# Автозапуск через fs.d (Keenetic хук на монтирование USB)
+# ============================================================
+echo ""
+echo "==> Устанавливаем fs.d хук автозапуска"
+mkdir -p /opt/etc/ndm/fs.d/
+cat > /opt/etc/ndm/fs.d/100-singbox-manager.sh << 'FS_EOF'
+#!/bin/sh
+# Keenetic вызывает при монтировании USB с Entware
+(
+    sleep 30
+    [ -x /opt/etc/init.d/S99singbox-manager ] && \
+        /opt/etc/init.d/S99singbox-manager start > /tmp/singbox-logs/autostart.log 2>&1
+) &
+exit 0
+FS_EOF
+chmod +x /opt/etc/ndm/fs.d/100-singbox-manager.sh
+echo "    OK: fs.d/100-singbox-manager.sh"
+
+# ============================================================
+# Cron-watchdog каждые 2 минуты
+# ============================================================
+echo ""
+echo "==> Cron-watchdog (*/2)"
+mkdir -p /opt/etc/cron.d
+cat > /opt/etc/cron.d/singbox-watchdog << 'CRON_EOF'
+*/2 * * * * root /opt/bin/singbox-watchdog.sh
+CRON_EOF
+chmod 644 /opt/etc/cron.d/singbox-watchdog
+echo "    OK: cron.d/singbox-watchdog"
+
+# Запуск crond
+if ! ps -w | grep -v grep | grep -q crond; then
+    echo "==> Запуск crond"
+    crond -c /opt/etc/cron.d -l 8
+    sleep 1
+fi
+ps -w | grep -v grep | grep -q crond && echo "    OK: crond запущен" || echo "    FAIL: crond не запущен"
 
 IP=$(ip addr show br0 2>/dev/null | grep "inet " | awk '{print $2}' | cut -d/ -f1 || echo "IP-роутера")
 echo ""
