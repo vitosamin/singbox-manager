@@ -1,6 +1,10 @@
 #!/bin/sh
+# Sing-box Manager init (v4.4.0)
+# Запускает менеджер + sing-box + tproxy + monitor.
+# Не удаляет NDMS-хук (это критично для защиты от black hole).
+
 BIN=/opt/bin/singbox-manager
-LOGFILE=/opt/var/log/singbox-manager.log
+LOGFILE=/tmp/singbox-logs/manager.log
 ADDR=":9091"
 MARKER=/opt/etc/sing-box/vpn.disabled
 SINGBOX=/opt/etc/sing-box/sing-box
@@ -8,18 +12,6 @@ CONFIG=/opt/etc/sing-box/config.d
 TPROXY_INIT=/opt/etc/init.d/S55singbox-tproxy.sh
 MONITOR=/opt/bin/singbox-monitor.sh
 LOGDIR=/tmp/singbox-logs
-
-# v4.3.9: cleanup_rules больше НЕ удаляет NDMS-хук (баг в v4.3.8)
-cleanup_rules() {
-    for i in br0 br1 br2; do
-        iptables -t mangle -D PREROUTING -i "$i" -j SINGBOX_MARK 2>/dev/null
-    done
-    iptables -t mangle -F SINGBOX_MARK 2>/dev/null
-    iptables -t mangle -X SINGBOX_MARK 2>/dev/null
-    ip rule del fwmark 0x1 table 100 2>/dev/null
-    ip route del default dev singtun0 table 100 2>/dev/null
-    # rm -f /opt/etc/ndm/netfilter.d/50-singbox.sh   # v4.3.9: УБРАНО
-}
 
 ensure_logdir() {
     [ -d "$LOGDIR" ] || mkdir -p "$LOGDIR"
@@ -33,46 +25,55 @@ start_monitor() {
 }
 
 start_singbox() {
+    # v4.4.0: sing-box СТАТИЧЕСКИЙ, запускаем НАПРЯМУЮ (без ld-linux!)
     if [ -d "$CONFIG" ] && [ ! -f "$MARKER" ]; then
         if ! ps -w | grep -v grep | grep -q "sing-box run"; then
             echo "Автозапуск sing-box..."
-            # Ищем загрузчик
-            LOADER=""
-            for c in /opt/lib/ld-linux*.so* /opt/lib/ld-*.so*; do
-                [ -f "$c" ] && LOADER="$c" && break
+            "$SINGBOX" run -C "$CONFIG" </dev/null > "$LOGDIR/sing-box.log" 2>&1 &
+            i=0
+            while [ $i -lt 15 ]; do
+                if netstat -tln 2>/dev/null | grep -q ':1081 '; then
+                    echo "OK: sing-box слушает 1081"
+                    break
+                fi
+                sleep 1
+                i=$((i+1))
             done
-            [ -z "$LOADER" ] && LOADER="/opt/lib/ld-linux.so.3"
-            "$LOADER" "$SINGBOX" run -C "$CONFIG" > /tmp/singbox-logs/sing-box.log 2>&1 &
-            sleep 5
         fi
     fi
 }
 
 start_tproxy() {
     if [ -x "$TPROXY_INIT" ]; then
-        "$TPROXY_INIT" start >/dev/null 2>&1 || true
+        # Правила применяем ТОЛЬКО если sing-box слушает 1081 (защита от black hole)
+        if netstat -tln 2>/dev/null | grep -q ':1081 '; then
+            "$TPROXY_INIT" start >/dev/null 2>&1 || true
+            echo "OK: tproxy-правила применены"
+        else
+            echo "sing-box НЕ слушает 1081 — tproxy не применяем"
+        fi
     fi
 }
 
 case "$1" in
     start)
+        ensure_logdir
+        mkdir -p /opt/var/log
+
         if ps -w | grep -v grep | grep -q "$BIN"; then
             echo "singbox-manager уже запущен"
         else
             echo "Запуск singbox-manager..."
-            cleanup_rules
-            mkdir -p /opt/var/log
             "$BIN" -addr "$ADDR" > "$LOGFILE" 2>&1 &
             sleep 3
-            if ps -w | grep -v grep | grep -q "$BIN"; then
-                echo "OK"
-            else
-                echo "ОШИБКА. Лог:"
+            if ! ps -w | grep -v grep | grep -q "$BIN"; then
+                echo "ОШИБКА: менеджер не запустился"
                 cat "$LOGFILE"
                 exit 1
             fi
+            echo "OK: менеджер запущен"
         fi
-        ensure_logdir
+
         start_singbox
         start_tproxy
         start_monitor
@@ -90,9 +91,10 @@ case "$1" in
         "$0" start
         ;;
     status)
-        ps -w | grep -v grep | grep -q "$BIN" && echo "singbox-manager работает" || echo "singbox-manager не запущен"
-        ps -w | grep -v grep | grep -q "sing-box run" && echo "sing-box работает" || echo "sing-box не запущен"
-        ps -w | grep -v grep | grep -q singbox-monitor && echo "monitor работает" || echo "monitor не запущен"
+        ps -w | grep -v grep | grep -q "$BIN" && echo "singbox-manager: работает" || echo "singbox-manager: не запущен"
+        ps -w | grep -v grep | grep -q "sing-box run" && echo "sing-box: работает" || echo "sing-box: не запущен"
+        ps -w | grep -v grep | grep -q singbox-monitor && echo "monitor: работает" || echo "monitor: не запущен"
+        netstat -tln 2>/dev/null | grep -q ':1081 ' && echo "порт 1081: слушается" || echo "порт 1081: НЕ слушается"
         ;;
     *)
         echo "Использование: $0 {start|stop|restart|status}"

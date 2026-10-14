@@ -4,7 +4,7 @@
 set -e
 
 REPO="vitosamin/singbox-manager"
-RELEASE_TAG="v4.3.9"
+RELEASE_TAG="v4.4.0"
 MANAGER_BIN_PATH="/opt/bin/singbox-manager"
 SINGBOX_BIN_PATH="/opt/etc/sing-box/sing-box"
 INIT_PATH="/opt/etc/init.d/S99singbox-manager"
@@ -19,7 +19,7 @@ TMP_DIR="/tmp"
 MARKER="/opt/etc/sing-box/vpn.disabled"
 
 # Cron-watchdog: 0 = отключён (по умолчанию), 1 = включён
-ENABLE_CRON_WATCHDOG=0
+ENABLE_CRON_WATCHDOG=1
 
 if [ ! -d /opt/etc ]; then
     echo "ОШИБКА: Entware не установлен."
