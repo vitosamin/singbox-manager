@@ -173,7 +173,7 @@ func Cleanup() error {
 		}
 	}
 	run("ip", "route", "del", "local", "default", "dev", "lo", "table", TProxyTable)
-	_ = os.Remove(ndmsHookPath)
+	// _ = os.Remove(ndmsHookPath)  // v4.3.9: не удаляем хук
 	return nil
 }
 
@@ -184,11 +184,7 @@ func CheckChain(chain, table string) error {
 
 func WriteNDMSHook() error {
 	script := `#!/bin/sh
-type="$1"
-table="$2"
-
-[ "$type" != "iptables" ] && exit 0
-[ "$table" != "nat" ] && [ "$table" != "mangle" ] && exit 0
+[ "$table" = "nat" ] || [ "$table" = "mangle" ] || exit 0
 [ -f /opt/etc/sing-box/vpn.disabled ] && exit 0
 
 ps -w | grep -v grep | grep -q "sing-box" || exit 0

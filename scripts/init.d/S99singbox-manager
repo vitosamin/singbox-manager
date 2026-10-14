@@ -2,7 +2,14 @@
 BIN=/opt/bin/singbox-manager
 LOGFILE=/opt/var/log/singbox-manager.log
 ADDR=":9091"
+MARKER=/opt/etc/sing-box/vpn.disabled
+SINGBOX=/opt/etc/sing-box/sing-box
+CONFIG=/opt/etc/sing-box/config.d
+TPROXY_INIT=/opt/etc/init.d/S55singbox-tproxy.sh
+MONITOR=/opt/bin/singbox-monitor.sh
+LOGDIR=/tmp/singbox-logs
 
+# v4.3.9: cleanup_rules больше НЕ удаляет NDMS-хук (баг в v4.3.8)
 cleanup_rules() {
     for i in br0 br1 br2; do
         iptables -t mangle -D PREROUTING -i "$i" -j SINGBOX_MARK 2>/dev/null
@@ -11,52 +18,85 @@ cleanup_rules() {
     iptables -t mangle -X SINGBOX_MARK 2>/dev/null
     ip rule del fwmark 0x1 table 100 2>/dev/null
     ip route del default dev singtun0 table 100 2>/dev/null
-    rm -f /opt/etc/ndm/netfilter.d/50-singbox.sh
+    # rm -f /opt/etc/ndm/netfilter.d/50-singbox.sh   # v4.3.9: УБРАНО
+}
+
+ensure_logdir() {
+    [ -d "$LOGDIR" ] || mkdir -p "$LOGDIR"
+}
+
+start_monitor() {
+    if ! ps -w | grep -v grep | grep -q singbox-monitor; then
+        ensure_logdir
+        "$MONITOR" </dev/null >/dev/null 2>&1 &
+    fi
+}
+
+start_singbox() {
+    if [ -d "$CONFIG" ] && [ ! -f "$MARKER" ]; then
+        if ! ps -w | grep -v grep | grep -q "sing-box run"; then
+            echo "Автозапуск sing-box..."
+            # Ищем загрузчик
+            LOADER=""
+            for c in /opt/lib/ld-linux*.so* /opt/lib/ld-*.so*; do
+                [ -f "$c" ] && LOADER="$c" && break
+            done
+            [ -z "$LOADER" ] && LOADER="/opt/lib/ld-linux.so.3"
+            "$LOADER" "$SINGBOX" run -C "$CONFIG" > /tmp/singbox-logs/sing-box.log 2>&1 &
+            sleep 5
+        fi
+    fi
+}
+
+start_tproxy() {
+    if [ -x "$TPROXY_INIT" ]; then
+        "$TPROXY_INIT" start >/dev/null 2>&1 || true
+    fi
 }
 
 case "$1" in
     start)
         if ps -w | grep -v grep | grep -q "$BIN"; then
             echo "singbox-manager уже запущен"
-            exit 0
-        fi
-        echo "Запуск singbox-manager..."
-        cleanup_rules
-        mkdir -p /opt/var/log
-        $BIN -addr $ADDR > $LOGFILE 2>&1 &
-        sleep 3
-        if ps -w | grep -v grep | grep -q "$BIN"; then
-            echo "OK"
         else
-            echo "ОШИБКА. Лог:"
-            cat $LOGFILE
-            exit 1
+            echo "Запуск singbox-manager..."
+            cleanup_rules
+            mkdir -p /opt/var/log
+            "$BIN" -addr "$ADDR" > "$LOGFILE" 2>&1 &
+            sleep 3
+            if ps -w | grep -v grep | grep -q "$BIN"; then
+                echo "OK"
+            else
+                echo "ОШИБКА. Лог:"
+                cat "$LOGFILE"
+                exit 1
+            fi
         fi
+        ensure_logdir
+        start_singbox
+        start_tproxy
+        start_monitor
         ;;
     stop)
         echo "Остановка..."
-        cleanup_rules
+        killall singbox-monitor 2>/dev/null
         killall singbox-manager 2>/dev/null
         killall sing-box 2>/dev/null
-        rm -f /opt/var/run/singbox-manager.pid
         echo "OK"
         ;;
     restart)
-        $0 stop
+        "$0" stop
         sleep 2
-        $0 start
+        "$0" start
         ;;
     status)
-        if ps -w | grep -v grep | grep -q "$BIN"; then
-            echo "singbox-manager работает"
-        else
-            echo "singbox-manager не запущен"
-        fi
+        ps -w | grep -v grep | grep -q "$BIN" && echo "singbox-manager работает" || echo "singbox-manager не запущен"
+        ps -w | grep -v grep | grep -q "sing-box run" && echo "sing-box работает" || echo "sing-box не запущен"
+        ps -w | grep -v grep | grep -q singbox-monitor && echo "monitor работает" || echo "monitor не запущен"
         ;;
     *)
         echo "Использование: $0 {start|stop|restart|status}"
         exit 1
         ;;
 esac
-
 exit 0
