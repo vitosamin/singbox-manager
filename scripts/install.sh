@@ -4,7 +4,7 @@
 set -e
 
 REPO="vitosamin/singbox-manager"
-RELEASE_TAG="v4.4.4"
+RELEASE_TAG="v4.4.5"
 MANAGER_BIN_PATH="/opt/bin/singbox-manager"
 SINGBOX_BIN_PATH="/opt/etc/sing-box/sing-box"
 INIT_PATH="/opt/etc/init.d/S99singbox-manager"
@@ -87,8 +87,11 @@ if [ "$HAS_TPROXY" -lt 2 ]; then
     echo ""
 fi
 
-for mod in xt_TPROXY xt_socket xt_nat xt_REDIRECT ip_set xt_set; do
-    insmod "$mod" 2>/dev/null || true
+KERNEL=$(uname -r)
+for mod in xt_socket xt_TPROXY xt_nat xt_REDIRECT xt_owner ip_set xt_set; do
+    for p in "/lib/modules/$KERNEL/$mod.ko" "/lib/system-modules/$mod.ko"; do
+        [ -f "$p" ] && insmod "$p" 2>/dev/null && break
+    done
 done
 
 # ============================================================
@@ -296,8 +299,11 @@ REDIRECT_PORT=1082
 FW_MARK=0x1
 ROUTE_TABLE=100
 
-for mod in xt_TPROXY xt_socket xt_nat xt_REDIRECT ip_set xt_set; do
-    insmod "$mod" 2>/dev/null || true
+KERNEL=$(uname -r)
+for mod in xt_socket xt_TPROXY xt_nat xt_REDIRECT xt_owner ip_set xt_set; do
+    for p in "/lib/modules/$KERNEL/$mod.ko" "/lib/system-modules/$mod.ko"; do
+        [ -f "$p" ] && insmod "$p" 2>/dev/null && break
+    done
 done
 
 apply_rules() {
