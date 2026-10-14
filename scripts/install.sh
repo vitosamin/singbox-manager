@@ -4,7 +4,7 @@
 set -e
 
 REPO="vitosamin/singbox-manager"
-RELEASE_TAG="v4.4.5"
+RELEASE_TAG="v4.4.6"
 MANAGER_BIN_PATH="/opt/bin/singbox-manager"
 SINGBOX_BIN_PATH="/opt/etc/sing-box/sing-box"
 INIT_PATH="/opt/etc/init.d/S99singbox-manager"
@@ -512,7 +512,6 @@ chmod +x "$MONITOR_PATH"
 if [ "$ENABLE_CRON_WATCHDOG" -eq 1 ]; then
     echo ""
     echo "==> Включаем cron-watchdog"
-    mkdir -p /opt/etc/cron.d
     mkdir -p /opt/var/spool/cron/crontabs
     cat > /opt/var/spool/cron/crontabs/root << 'CRONTAB_EOF'
 * * * * * /opt/bin/singbox-watchdog.sh
@@ -606,14 +605,6 @@ echo "    OK: fs.d/100-singbox-manager.sh"
 # ============================================================
 # Cron-watchdog каждые 2 минуты
 # ============================================================
-echo ""
-echo "==> Cron-watchdog (*/2)"
-mkdir -p /opt/etc/cron.d
-cat > /opt/etc/cron.d/singbox-watchdog << 'CRON_EOF'
-*/2 * * * * root /opt/bin/singbox-watchdog.sh
-CRON_EOF
-chmod 644 /opt/etc/cron.d/singbox-watchdog
-echo "    OK: cron.d/singbox-watchdog"
 
 # Запуск crond
 if ! ps -w | grep -v grep | grep -q crond; then
