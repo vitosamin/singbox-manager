@@ -4,7 +4,7 @@
 set -e
 
 REPO="vitosamin/singbox-manager"
-RELEASE_TAG="v4.4.1"
+RELEASE_TAG="v4.4.2"
 MANAGER_BIN_PATH="/opt/bin/singbox-manager"
 SINGBOX_BIN_PATH="/opt/etc/sing-box/sing-box"
 INIT_PATH="/opt/etc/init.d/S99singbox-manager"
@@ -64,7 +64,11 @@ fi
 # 2. Каталог логов в RAM
 # ============================================================
 mkdir -p "$LOGDIR"
+# Симлинк для UI-менеджера: он читает /opt/var/log/sing-box.log
+mkdir -p /opt/var/log
+ln -sf "$LOGDIR/sing-box.log" /opt/var/log/sing-box.log
 echo "    [OK] Логи в RAM: $LOGDIR"
+echo "    [OK] Симлинк: /opt/var/log/sing-box.log -> $LOGDIR/sing-box.log"
 
 # ============================================================
 # 3. Модули ядра TPROXY
@@ -209,6 +213,10 @@ LOGDIR=$LOGDIR
 
 ensure_logdir() {
     [ -d "\$LOGDIR" ] || mkdir -p "\$LOGDIR"
+    # Восстанавливаем симлинк для UI (на случай, если /tmp очистился)
+    [ -f "\$LOGDIR/sing-box.log" ] || touch "\$LOGDIR/sing-box.log"
+    mkdir -p /opt/var/log
+    ln -sf "\$LOGDIR/sing-box.log" /opt/var/log/sing-box.log
 }
 
 start_monitor() {

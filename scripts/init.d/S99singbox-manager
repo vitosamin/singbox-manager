@@ -15,6 +15,9 @@ LOGDIR=/tmp/singbox-logs
 
 ensure_logdir() {
     [ -d "$LOGDIR" ] || mkdir -p "$LOGDIR"
+    [ -f "$LOGDIR/sing-box.log" ] || touch "$LOGDIR/sing-box.log"
+    mkdir -p /opt/var/log
+    ln -sf "$LOGDIR/sing-box.log" /opt/var/log/sing-box.log
 }
 
 start_monitor() {
