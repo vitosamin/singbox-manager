@@ -4,7 +4,7 @@
 set -e
 
 REPO="vitosamin/singbox-manager"
-RELEASE_TAG="v4.4.7"
+RELEASE_TAG="v4.4.8"
 MANAGER_BIN_PATH="/opt/bin/singbox-manager"
 SINGBOX_BIN_PATH="/opt/etc/sing-box/sing-box"
 INIT_PATH="/opt/etc/init.d/S99singbox-manager"
@@ -411,8 +411,8 @@ TPROXY_INIT=/opt/etc/init.d/S55singbox-tproxy.sh
 
 # Защита от цикла: если цепочки уже стоят — выходим молча
 NEED_RESTORE=0
-iptables -t nat -C PREROUTING -j SB_TCP >/dev/null 2>&1 || NEED_RESTORE=1
-iptables -t mangle -C PREROUTING -p udp -j SB_UDP_TRANSIT >/dev/null 2>&1 || NEED_RESTORE=1
+iptables -t nat -S PREROUTING 2>/dev/null | grep -q 'SB_TCP' || NEED_RESTORE=1
+iptables -t mangle -S PREROUTING 2>/dev/null | grep -q 'SB_UDP_TRANSIT' || NEED_RESTORE=1
 
 if [ "$NEED_RESTORE" -eq 0 ]; then
     exit 0
@@ -466,12 +466,12 @@ if ! ps -w | grep -v grep | grep -q "sing-box run"; then
     exit 0
 fi
 
-if ! iptables -t nat -C PREROUTING -j SB_TCP >/dev/null 2>&1; then
+if ! iptables -t nat -S PREROUTING 2>/dev/null | grep -q 'SB_TCP'; then
     echo "$NOW: SB_TCP пропал → восстановление" >> "$LOG"
     /opt/etc/init.d/S55singbox-tproxy.sh start >/dev/null 2>&1
 fi
 
-if ! iptables -t mangle -C PREROUTING -p udp -j SB_UDP_TRANSIT >/dev/null 2>&1; then
+if ! iptables -t mangle -S PREROUTING 2>/dev/null | grep -q 'SB_UDP_TRANSIT'; then
     echo "$NOW: SB_UDP_TRANSIT пропал → восстановление" >> "$LOG"
     /opt/etc/init.d/S55singbox-tproxy.sh start >/dev/null 2>&1
 fi
