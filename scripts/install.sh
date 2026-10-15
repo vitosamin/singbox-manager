@@ -4,7 +4,7 @@
 set -e
 
 REPO="vitosamin/singbox-manager"
-RELEASE_TAG="v4.4.6"
+RELEASE_TAG="v4.4.7"
 MANAGER_BIN_PATH="/opt/bin/singbox-manager"
 SINGBOX_BIN_PATH="/opt/etc/sing-box/sing-box"
 INIT_PATH="/opt/etc/init.d/S99singbox-manager"
@@ -496,7 +496,7 @@ LOG=$LOGDIR/monitor.log
 while true; do
     TS=$(date "+%Y-%m-%d %H:%M:%S")
     TCP_N=$(iptables -t nat -S PREROUTING 2>/dev/null | grep -c 'SB_TCP'); [ "$TCP_N" -gt 0 ] && TCP=1 || TCP=0
-    UDP=$(iptables -t mangle -C PREROUTING -p udp -j SB_UDP_TRANSIT >/dev/null 2>&1 && echo 1 || echo 0)
+    UDP_N=$(iptables -t mangle -S PREROUTING 2>/dev/null | grep -c 'SB_UDP_TRANSIT'); [ "$UDP_N" -gt 0 ] && UDP=1 || UDP=0
     RULE=$(ip rule show 2>/dev/null | grep -c "fwmark 0x1")
     echo "$TS TCP=$TCP UDP=$UDP RULE=$RULE" >> "$LOG"
     [ -f "$LOG" ] && tail -2000 "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"
