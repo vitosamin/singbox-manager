@@ -20,7 +20,6 @@ const TAB_META = {
     servers:    { title: 'Серверы',          sub: 'Управление VPN-серверами' },
     rules:      { title: 'Правила обхода',    sub: 'Все правила в одном месте' },
     priorities: { title: 'Приоритеты',        sub: 'Порядок серверов в группах' },
-    devices:    { title: 'Устройства',        sub: 'Маршрутизация по IP' },
     dns:        { title: 'DNS',               sub: 'DNS-серверы и резолвинг' },
     sync:       { title: 'Синхронизация',     sub: 'Автообновление списков' },
     settings:   { title: 'Настройки',         sub: 'Логи, рестарт, экспорт' },
@@ -1142,3 +1141,11 @@ addAuthButtons();
 initPasswordChange();
 
 loadState();
+
+// v4.4.10: скрываем пункт "Устройства" — не используется
+document.addEventListener('DOMContentLoaded', () => {
+    const devicesTab = document.querySelector('[data-tab="devices"]');
+    if (devicesTab) devicesTab.style.display = 'none';
+    const devicesPage = document.querySelector('[data-page="devices"]');
+    if (devicesPage) devicesPage.style.display = 'none';
+});
