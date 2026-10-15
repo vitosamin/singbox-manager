@@ -4,7 +4,7 @@
 set -e
 
 REPO="vitosamin/singbox-manager"
-RELEASE_TAG="v4.4.8"
+RELEASE_TAG="v4.4.9"
 MANAGER_BIN_PATH="/opt/bin/singbox-manager"
 SINGBOX_BIN_PATH="/opt/etc/sing-box/sing-box"
 INIT_PATH="/opt/etc/init.d/S99singbox-manager"
@@ -231,8 +231,8 @@ start_monitor() {
 
 apply_tproxy() {
     if [ -x "\$TPROXY_INIT" ]; then
-        if ! iptables -t nat -C PREROUTING -j SB_TCP >/dev/null 2>&1 || \
-           ! iptables -t mangle -C PREROUTING -p udp -j SB_UDP_TRANSIT >/dev/null 2>&1; then
+        if ! iptables -t nat -S PREROUTING 2>/dev/null | grep -q 'SB_TCP' || \
+           ! iptables -t mangle -S PREROUTING 2>/dev/null | grep -q 'SB_UDP_TRANSIT'; then
             echo "Применение iptables-правил..."
             "\$TPROXY_INIT" start >/dev/null 2>&1 || true
         fi
@@ -376,8 +376,8 @@ case "$1" in
         $0 stop; sleep 1; $0 start
         ;;
     status)
-        iptables -t nat -C PREROUTING -j SB_TCP >/dev/null 2>&1 && echo "SB_TCP: активны" || echo "SB_TCP: отсутствуют"
-        iptables -t mangle -C PREROUTING -p udp -j SB_UDP_TRANSIT >/dev/null 2>&1 && echo "SB_UDP_TRANSIT: активны" || echo "SB_UDP_TRANSIT: отсутствуют"
+        iptables -t nat -S PREROUTING 2>/dev/null | grep -q 'SB_TCP' && echo "SB_TCP: активны" || echo "SB_TCP: отсутствуют"
+        iptables -t mangle -S PREROUTING 2>/dev/null | grep -q 'SB_UDP_TRANSIT' && echo "SB_UDP_TRANSIT: активны" || echo "SB_UDP_TRANSIT: отсутствуют"
         ;;
     *)
         # Обратная совместимость: без аргумента делаем start
