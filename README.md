@@ -1,5 +1,4 @@
-# Sing-box Manager
-# Sing-box Manager
+# Sing-box Manager VitosaminTM
 
 Веб-панель управления **Sing-box** на роутерах **Keenetic** (Entware). Управление VLESS/Trojan/Hysteria2/Shadowsocks-туннелями, раздельная маршрутизация по доменам и CIDR, автоматический failover при падении серверов.
 
