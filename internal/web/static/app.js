@@ -1149,38 +1149,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const devicesPage = document.querySelector('[data-page="devices"]');
     if (devicesPage) devicesPage.style.display = 'none';
 });
-// v4.7.0: сворачивание секции "Состояние кэша .srs"
-(function initSrsCacheToggle() {
-    const KEY = 'sb_srs_cache_collapsed';
-    function setup() {
-        const btn = document.getElementById('srs-cache-toggle');
-        const body = document.getElementById('srs-cache-body');
-        if (!btn || !body || btn.dataset.bound === '1') return;
-
-        const apply = () => {
-            const collapsed = localStorage.getItem(KEY) === '1';
-            body.style.display = collapsed ? 'none' : '';
-            btn.textContent = collapsed ? '▶' : '▼';
-        };
-
-        btn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const collapsed = localStorage.getItem(KEY) === '1';
-            localStorage.setItem(KEY, collapsed ? '0' : '1');
-            apply();
-        });
-
-        btn.dataset.bound = '1';
-        apply();
-    }
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', setup);
-    } else {
-        setup();
-    }
-    // на случай, если секция подгрузится позже
-    setTimeout(setup, 500);
-})();
 
 // v4.7.0: простая инициализация lucide (без MutationObserver)
 // После каждого render вызываем lucide.createIcons() вручную там, где нужно.
@@ -1189,3 +1157,34 @@ document.addEventListener('DOMContentLoaded', () => {
         setTimeout(() => { try { lucide.createIcons(); } catch(e) {} }, 100);
     }
 });
+
+// v4.7.1: сворачивание секции "Состояние кэша .srs" — делегированный клик
+(function setupSrsCacheToggle() {
+    const KEY = 'sb_srs_cache_collapsed';
+    function apply() {
+        const btn = document.getElementById('srs-cache-toggle');
+        const body = document.getElementById('srs-cache-body');
+        if (!btn || !body) return false;
+        const collapsed = localStorage.getItem(KEY) === '1';
+        body.style.display = collapsed ? 'none' : '';
+        btn.textContent = collapsed ? '\u25B6' : '\u25BC';
+        return true;
+    }
+    // Делегированный клик — работает, даже если кнопка появится позже
+    document.addEventListener('click', (e) => {
+        const btn = e.target.closest && e.target.closest('#srs-cache-toggle');
+        if (!btn) return;
+        e.stopPropagation();
+        e.preventDefault();
+        const collapsed = localStorage.getItem(KEY) === '1';
+        localStorage.setItem(KEY, collapsed ? '0' : '1');
+        apply();
+    });
+    // Инициализация
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', apply);
+    } else {
+        apply();
+    }
+    setTimeout(apply, 500);
+})();
