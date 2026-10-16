@@ -83,6 +83,7 @@ func Start(addr string) error {
 	mux.HandleFunc("/api/catalog", handleCatalog)
 	mux.HandleFunc("/api/subscription", handleSubscription)
 	mux.HandleFunc("/api/proxies/add", handleProxyAdd)
+	mux.HandleFunc("/api/proxies/update", handleProxyUpdate)
 	mux.HandleFunc("/api/proxies/remove", handleProxyRemove)
 	mux.HandleFunc("/api/proxies/test", handleProxyTest)
 	mux.HandleFunc("/api/lists/toggle", handleToggleList)
@@ -193,6 +194,27 @@ func handleProxyAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]interface{}{"ok": true, "added": added})
+}
+
+// handleProxyUpdate — обновить сервер по тегу (тег не меняется).
+func handleProxyUpdate(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Tag string `json:"tag"`
+		Raw string `json:"raw"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if body.Tag == "" {
+		writeJSON(w, map[string]interface{}{"error": "tag обязателен"})
+		return
+	}
+	if err := store.UpdateProxy(body.Tag, body.Raw); err != nil {
+		writeJSON(w, map[string]interface{}{"error": err.Error()})
+		return
+	}
+	writeJSON(w, map[string]interface{}{"ok": true})
 }
 
 // handleProxyRemove — удалить сервер по тегу.

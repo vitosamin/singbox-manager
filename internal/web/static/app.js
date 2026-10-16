@@ -284,6 +284,7 @@ function renderServers() {
             </div>
             <div class="srv-actions">
                 <button class="srv-btn" data-action="test"><i data-lucide="flask-conical"></i> Тест</button>
+                <button class="srv-btn" data-action="edit"><i data-lucide="pencil"></i> Изменить</button>
                 <button class="srv-btn srv-btn-danger" data-action="remove"><i data-lucide="trash-2"></i> Удалить</button>
             </div>
             <div class="srv-charts">
@@ -299,6 +300,7 @@ function renderServers() {
             </div>
         `;
         el.querySelector('[data-action="test"]').addEventListener('click', () => testProxy(p.tag, el));
+        el.querySelector('[data-action="edit"]').addEventListener('click', () => openEditModal(p));
         el.querySelector('[data-action="remove"]').addEventListener('click', () => removeProxy(p.tag));
         el.querySelector('[data-action="reveal-server"]').addEventListener('click', (e) => {
             e.stopPropagation();
@@ -1206,3 +1208,81 @@ document.addEventListener('DOMContentLoaded', () => {
     setTimeout(applyAll, 500);
     setTimeout(applyAll, 1500);
 })();
+
+// v4.8.0: редактирование серверов
+let editingProxy = null;
+
+function openEditModal(p) {
+    editingProxy = Object.assign({}, p);
+    document.getElementById('edit-name').value   = p.name || '';
+    document.getElementById('edit-server').value = p.server || '';
+    document.getElementById('edit-port').value   = p.port || 443;
+    document.getElementById('edit-uuid').value   = p.uuid || '';
+    document.getElementById('edit-sni').value    = p.sni || '';
+    document.getElementById('edit-pbk').value    = p.public_key || '';
+    document.getElementById('edit-sid').value    = p.short_id || '';
+    document.getElementById('edit-fp').value     = p.fingerprint || '';
+    document.getElementById('edit-flow').value   = p.flow || '';
+    document.getElementById('edit-status').textContent = '';
+    document.getElementById('edit-status').className = 'status';
+    document.getElementById('modal-edit').style.display = 'flex';
+}
+
+function buildVlessUrl(p, fields) {
+    const params = new URLSearchParams();
+    params.set('encryption', 'none');
+    if (fields.flow) params.set('flow', fields.flow);
+    if (fields.fp)   params.set('fp', fields.fp);
+    if (fields.pbk)  params.set('pbk', fields.pbk);
+    if (p.security)  params.set('security', p.security);
+    if (fields.sid)  params.set('sid', fields.sid);
+    if (fields.sni)  params.set('sni', fields.sni);
+    params.set('type', p.network || 'tcp');
+    const hash = fields.name ? '#' + encodeURIComponent(fields.name) : '';
+    return 'vless://' + fields.uuid + '@' + fields.server + ':' + fields.port + '?' + params.toString() + hash;
+}
+
+const btnEditCancel = document.getElementById('edit-cancel');
+if (btnEditCancel) btnEditCancel.addEventListener('click', () => {
+    document.getElementById('modal-edit').style.display = 'none';
+    editingProxy = null;
+});
+
+const btnEditSave = document.getElementById('edit-save');
+if (btnEditSave) btnEditSave.addEventListener('click', async () => {
+    if (!editingProxy) return;
+    const fields = {
+        name:   document.getElementById('edit-name').value.trim(),
+        server: document.getElementById('edit-server').value.trim(),
+        port:   parseInt(document.getElementById('edit-port').value, 10) || 443,
+        uuid:   document.getElementById('edit-uuid').value.trim(),
+        sni:    document.getElementById('edit-sni').value.trim(),
+        pbk:    document.getElementById('edit-pbk').value.trim(),
+        sid:    document.getElementById('edit-sid').value.trim(),
+        fp:     document.getElementById('edit-fp').value.trim(),
+        flow:   document.getElementById('edit-flow').value.trim(),
+    };
+    if (!fields.server || !fields.uuid) {
+        const s = document.getElementById('edit-status');
+        s.textContent = 'Сервер и UUID обязательны';
+        s.className = 'status err';
+        return;
+    }
+    const raw = buildVlessUrl(editingProxy, fields);
+    const status = document.getElementById('edit-status');
+    status.textContent = 'Сохраняем...';
+    status.className = 'status';
+    const r = await api('/api/proxies/update', 'POST', { tag: editingProxy.tag, raw });
+    if (r.error) {
+        status.textContent = 'Ошибка: ' + r.error;
+        status.className = 'status err';
+    } else {
+        status.textContent = 'Сохранено!';
+        status.className = 'status ok';
+        setTimeout(async () => {
+            document.getElementById('modal-edit').style.display = 'none';
+            editingProxy = null;
+            await loadState();
+        }, 400);
+    }
+});

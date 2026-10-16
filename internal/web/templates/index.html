@@ -841,6 +841,29 @@
     </main>
 </div>
 
+<div id="modal-edit" class="modal-overlay" style="display:none;">
+    <div class="modal">
+        <h3>Редактировать сервер</h3>
+        <p class="modal-hint">Изменения сохранятся с тем же тегом — группы и правила не сломаются.</p>
+        <div class="modal-fields">
+            <label>Имя (с флагом) <input id="edit-name" placeholder="🇳🇱 reality-Test"></label>
+            <label>Сервер <input id="edit-server" placeholder="example.com"></label>
+            <label>Порт <input id="edit-port" type="number" placeholder="443"></label>
+            <label>UUID <input id="edit-uuid" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"></label>
+            <label>SNI <input id="edit-sni" placeholder="example.com"></label>
+            <label>Public Key (Reality) <input id="edit-pbk" placeholder="..."></label>
+            <label>Short ID (Reality) <input id="edit-sid" placeholder="..."></label>
+            <label>Fingerprint <input id="edit-fp" placeholder="chrome"></label>
+            <label>Flow <input id="edit-flow" placeholder="xtls-rprx-vision"></label>
+        </div>
+        <div class="modal-actions">
+            <button id="edit-cancel" class="btn">Отмена</button>
+            <button id="edit-save" class="btn primary">Сохранить</button>
+        </div>
+        <div id="edit-status" class="status"></div>
+    </div>
+</div>
+
 <div id="modal-add" class="modal-overlay" style="display:none;">
     <div class="modal">
         <h3>Добавить сервер</h3>

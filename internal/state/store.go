@@ -468,6 +468,32 @@ func (s *Store) RemoveProxy(tag string) error {
 	return s.saveLocked()
 }
 
+// UpdateProxy заменяет прокси по тегу, сохраняя оригинальный тег.
+// Используется при редактировании, чтобы не сломать группы и правила.
+func (s *Store) UpdateProxy(tag string, raw string) error {
+	parsed, err := subscription.Parse(raw)
+	if err != nil {
+		return err
+	}
+	if len(parsed) == 0 {
+		return fmt.Errorf("не распознано ни одной ссылки")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	newP := parsed[0]
+	newP.Tag = tag // сохраняем оригинальный тег
+
+	for i := range s.state.Proxies {
+		if s.state.Proxies[i].Tag == tag {
+			s.state.Proxies[i] = newP
+			return s.saveLocked()
+		}
+	}
+	return fmt.Errorf("proxy %s не найден", tag)
+}
+
 func (s *Store) RawJSON() ([]byte, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

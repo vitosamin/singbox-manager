@@ -671,3 +671,36 @@ h3 svg,
     align-items: center;
     gap: 8px;
 }
+
+/* v4.8.0: поля редактирования сервера */
+.modal-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin: 16px 0;
+    max-height: 55vh;
+    overflow-y: auto;
+    padding-right: 4px;
+}
+.modal-fields label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 12px;
+    color: var(--text-dim);
+}
+.modal-fields input {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    padding: 8px 10px;
+    font-family: inherit;
+    font-size: 13px;
+    transition: border-color 0.15s;
+}
+.modal-fields input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(74,158,255,0.15);
+}
