@@ -1162,8 +1162,10 @@ document.addEventListener('DOMContentLoaded', () => {
 // По умолчанию — обе СВЁРНУТЫ. Состояние сохраняется в localStorage.
 (function setupSectionToggles() {
     const SECTIONS = [
-        { key: 'sb_srs_cache_collapsed',    btnId: 'srs-cache-toggle',    bodyId: 'srs-cache-body' },
-        { key: 'sb_catalog_collapsed',      btnId: 'catalog-toggle',      bodyId: 'catalog-body'   }
+        { key: 'sb_srs_cache_collapsed',      btnId: 'srs-cache-toggle',       bodyId: 'srs-cache-body' },
+        { key: 'sb_catalog_collapsed',        btnId: 'catalog-toggle',         bodyId: 'catalog-body' },
+        { key: 'sb_custom_rules_collapsed',   btnId: 'custom-rules-toggle',    bodyId: 'custom-rules-body' },
+        { key: 'sb_custom_srs_collapsed',     btnId: 'custom-srs-toggle',      bodyId: 'custom-srs-body' }
     ];
 
     function apply(s) {

@@ -466,6 +466,7 @@
 
             <div class="rule-block">
                 <div class="rule-block-head">
+                    <button id="custom-rules-toggle" class="section-toggle" title="Свернуть/развернуть">▶</button>
                     <h3><!-- @license lucide-static v0.511.0 - ISC -->
 <svg
   class="lucide lucide-pencil"
@@ -484,16 +485,19 @@
 </svg> Свои правила (домены/CIDR)</h3>
                     <div class="section-hint">Правило создаётся автоматически при сохранении.</div>
                 </div>
-                <div id="custom-rules-list" class="custom-list"></div>
-                <div class="actions">
-                    <button id="btn-add-rule" class="btn">+ Добавить правило</button>
-                    <button id="btn-save-rules" class="btn primary">Сохранить правила</button>
-                    <span id="rules-status" class="status"></span>
+                <div id="custom-rules-body" style="display:none">
+                    <div id="custom-rules-list" class="custom-list"></div>
+                    <div class="actions">
+                        <button id="btn-add-rule" class="btn">+ Добавить правило</button>
+                        <button id="btn-save-rules" class="btn primary">Сохранить правила</button>
+                        <span id="rules-status" class="status"></span>
+                    </div>
                 </div>
             </div>
 
             <div class="rule-block">
                 <div class="rule-block-head">
+                    <button id="custom-srs-toggle" class="section-toggle" title="Свернуть/развернуть">▶</button>
                     <h3><!-- @license lucide-static v0.511.0 - ISC -->
 <svg
   class="lucide lucide-globe"
@@ -513,11 +517,13 @@
 </svg> Свои .srs URL</h3>
                     <div class="section-hint">Прямые ссылки на .srs файлы.</div>
                 </div>
-                <div id="custom-srs-list" class="custom-list"></div>
-                <div class="actions">
-                    <button id="btn-add-srs" class="btn">+ Добавить .srs</button>
-                    <button id="btn-save-srs" class="btn primary">Сохранить .srs</button>
-                    <span id="srs-status" class="status"></span>
+                <div id="custom-srs-body" style="display:none">
+                    <div id="custom-srs-list" class="custom-list"></div>
+                    <div class="actions">
+                        <button id="btn-add-srs" class="btn">+ Добавить .srs</button>
+                        <button id="btn-save-srs" class="btn primary">Сохранить .srs</button>
+                        <span id="srs-status" class="status"></span>
+                    </div>
                 </div>
             </div>
         </section>

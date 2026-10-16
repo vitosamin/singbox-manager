@@ -227,7 +227,18 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
 
 /* ============ Rule blocks ============ */
 .rule-block { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; margin-bottom: 16px; box-shadow: var(--shadow); }
-.rule-block-head { margin-bottom: 14px; }
+.rule-block-head {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px 10px;
+    margin-bottom: 14px;
+}
+.rule-block-head .section-hint {
+    flex-basis: 100%;
+    margin-left: 28px;
+    margin-top: 0;
+}
 .rule-block-head h3 { font-size: 15px; font-weight: 600; color: var(--text); margin-bottom: 2px; }
 
 .catalog { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
@@ -480,8 +491,8 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
 .rulesets-header {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 12px;
+    flex-wrap: wrap;
+    gap: 8px 10px;
     margin-bottom: 8px;
 }
 
