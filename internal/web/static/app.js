@@ -1166,3 +1166,36 @@ document.addEventListener('DOMContentLoaded', () => {
     // Подхватываем динамически созданные элементы
     new MutationObserver(refresh).observe(document.body, { childList: true, subtree: true });
 })();
+
+// v4.7.0: сворачивание секции "Состояние кэша .srs"
+(function initSrsCacheToggle() {
+    const KEY = 'sb_srs_cache_collapsed';
+    function setup() {
+        const btn = document.getElementById('srs-cache-toggle');
+        const body = document.getElementById('srs-cache-body');
+        if (!btn || !body || btn.dataset.bound === '1') return;
+
+        const apply = () => {
+            const collapsed = localStorage.getItem(KEY) === '1';
+            body.style.display = collapsed ? 'none' : '';
+            btn.textContent = collapsed ? '▶' : '▼';
+        };
+
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const collapsed = localStorage.getItem(KEY) === '1';
+            localStorage.setItem(KEY, collapsed ? '0' : '1');
+            apply();
+        });
+
+        btn.dataset.bound = '1';
+        apply();
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', setup);
+    } else {
+        setup();
+    }
+    // на случай, если секция подгрузится позже
+    setTimeout(setup, 500);
+})();

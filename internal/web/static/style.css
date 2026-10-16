@@ -630,3 +630,21 @@ h3 svg,
     fill: none;
     stroke-width: 2;
 }
+
+/* v4.7.0: кнопка сворачивания секции "Состояние кэша .srs" */
+.section-toggle {
+    background: transparent;
+    border: 1px solid var(--border, #333);
+    color: var(--text-dim, #888);
+    cursor: pointer;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    margin-left: 8px;
+    transition: color 0.15s, border-color 0.15s;
+    line-height: 1;
+}
+.section-toggle:hover {
+    color: var(--text, #fff);
+    border-color: var(--accent, #4a9eff);
+}
