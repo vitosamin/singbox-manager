@@ -1158,33 +1158,49 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 });
 
-// v4.7.1: сворачивание секции "Состояние кэша .srs" — делегированный клик
-(function setupSrsCacheToggle() {
-    const KEY = 'sb_srs_cache_collapsed';
-    function apply() {
-        const btn = document.getElementById('srs-cache-toggle');
-        const body = document.getElementById('srs-cache-body');
+// v4.7.2: сворачивание секций "Состояние кэша .srs" и "Из каталога"
+// По умолчанию — обе СВЁРНУТЫ. Состояние сохраняется в localStorage.
+(function setupSectionToggles() {
+    const SECTIONS = [
+        { key: 'sb_srs_cache_collapsed',    btnId: 'srs-cache-toggle',    bodyId: 'srs-cache-body' },
+        { key: 'sb_catalog_collapsed',      btnId: 'catalog-toggle',      bodyId: 'catalog-body'   }
+    ];
+
+    function apply(s) {
+        const btn = document.getElementById(s.btnId);
+        const body = document.getElementById(s.bodyId);
         if (!btn || !body) return false;
-        const collapsed = localStorage.getItem(KEY) === '1';
-        body.style.display = collapsed ? 'none' : '';
-        btn.textContent = collapsed ? '\u25B6' : '\u25BC';
+        // default = collapsed (только "0" означает развёрнуто)
+        const expanded = localStorage.getItem(s.key) === '0';
+        body.style.display = expanded ? '' : 'none';
+        btn.textContent = expanded ? '\u25BC' : '\u25B6';
         return true;
     }
-    // Делегированный клик — работает, даже если кнопка появится позже
+
+    function applyAll() { SECTIONS.forEach(apply); }
+
+    // Делегированный клик
     document.addEventListener('click', (e) => {
-        const btn = e.target.closest && e.target.closest('#srs-cache-toggle');
-        if (!btn) return;
-        e.stopPropagation();
-        e.preventDefault();
-        const collapsed = localStorage.getItem(KEY) === '1';
-        localStorage.setItem(KEY, collapsed ? '0' : '1');
-        apply();
+        for (const s of SECTIONS) {
+            const btn = e.target.closest && e.target.closest('#' + s.btnId);
+            if (btn) {
+                e.preventDefault();
+                e.stopPropagation();
+                const expanded = localStorage.getItem(s.key) === '0';
+                localStorage.setItem(s.key, expanded ? '1' : '0');
+                apply(s);
+                return;
+            }
+        }
     });
-    // Инициализация
+
+    // Инициализация при загрузке
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', apply);
+        document.addEventListener('DOMContentLoaded', applyAll);
     } else {
-        apply();
+        applyAll();
     }
-    setTimeout(apply, 500);
+    // На случай отложенного рендера
+    setTimeout(applyAll, 500);
+    setTimeout(applyAll, 1500);
 })();

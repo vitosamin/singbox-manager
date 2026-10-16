@@ -648,3 +648,15 @@ h3 svg,
     color: var(--text, #fff);
     border-color: var(--accent, #4a9eff);
 }
+
+/* v4.7.2: обёртка для кнопок внутри свёрнутых секций */
+.rulesets-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 12px;
+}
+.rulesets-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
