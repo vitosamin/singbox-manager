@@ -298,8 +298,14 @@ TPROXY_PORT=1081
 REDIRECT_PORT=1082
 FW_MARK=0x1
 ROUTE_TABLE=100
-
 KERNEL=$(uname -r)
+
+# v4.8.1: сброс conntrack — старые записи не блокируют трафик
+flush_conntrack() {
+    if [ -w /proc/sys/net/netfilter/nf_conntrack_sweep ]; then
+        echo 1 > /proc/sys/net/netfilter/nf_conntrack_sweep 2>/dev/null || true
+    fi
+}
 for mod in xt_socket xt_TPROXY xt_nat xt_REDIRECT xt_owner ip_set xt_set; do
     for p in "/lib/modules/$KERNEL/$mod.ko" "/lib/system-modules/$mod.ko"; do
         [ -f "$p" ] && insmod "$p" 2>/dev/null && break
@@ -348,10 +354,7 @@ apply_rules() {
     ip route flush table "$ROUTE_TABLE" 2>/dev/null || true
     ip route add local default dev lo table "$ROUTE_TABLE"
 
-    # Опционально: сброс conntrack (Keenetic)
-    if [ -w /proc/sys/net/netfilter/nf_conntrack_sweep ]; then
-        echo 1 > /proc/sys/net/netfilter/nf_conntrack_sweep 2>/dev/null || true
-    fi
+    flush_conntrack
 }
 
 remove_rules() {
@@ -361,6 +364,8 @@ remove_rules() {
     iptables -t mangle -F SB_UDP_TRANSIT 2>/dev/null || true
     ip rule del fwmark "$FW_MARK" lookup "$ROUTE_TABLE" 2>/dev/null || true
     ip route flush table "$ROUTE_TABLE" 2>/dev/null || true
+
+    flush_conntrack
 }
 
 case "$1" in
