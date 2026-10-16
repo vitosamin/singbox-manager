@@ -143,13 +143,13 @@ function updateBadges() {
 }
 
 const CATALOG_ICONS = {
-    'youtube': '▶️', 'tiktok': '🎵', 'hdrezka': '🎬', 'anime': '🌸', 'porn': '🔞',
-    'telegram': '✈️', 'discord': '💬', 'twitter': '🐦', 'meta': '📘',
-    'google_ai': '🤖', 'google_meet': '📹', 'google_play': '📱',
-    'roblox': '🎮', 'russia_inside': '🇷🇺', 'russia_outside': '🌍',
-    'geoblock': '🌐', 'block': '🚫', 'hodca': '📦',
-    'cloudflare': '☁️', 'cloudfront': '🌤️', 'digitalocean': '💧',
-    'hetzner': '🟥', 'ovh': '🔵', 'news': '📰',
+    'youtube': 'youtube', 'tiktok': 'music-2', 'hdrezka': 'film', 'anime': 'flower-2', 'porn': 'alert-triangle',
+    'telegram': 'send', 'discord': 'message-circle', 'twitter': 'twitter', 'meta': 'facebook',
+    'google_ai': 'bot', 'google_meet': 'video', 'google_play': 'smartphone',
+    'roblox': 'gamepad-2', 'russia_inside': 'flag', 'russia_outside': 'globe-2',
+    'geoblock': 'globe', 'block': 'ban', 'hodca': 'package',
+    'cloudflare': 'cloud', 'cloudfront': 'cloud-sun', 'digitalocean': 'droplet',
+    'hetzner': 'square', 'ovh': 'circle', 'news': 'newspaper',
 };
 
 async function loadCatalog() {
@@ -175,10 +175,10 @@ function renderCatalog() {
             const enabled = state.enabled.includes(item.id);
             const el = document.createElement('div');
             el.className = 'catalog-item' + (enabled ? ' enabled' : '');
-            const icon = CATALOG_ICONS[item.id] || '📦';
+            const icon = CATALOG_ICONS[item.id] || 'package';
             el.innerHTML = `
                 <div class="catalog-row">
-                    <div class="catalog-icon">${icon}</div>
+                    <div class="catalog-icon"><i data-lucide="${icon}"></i></div>
                     <div class="catalog-info">
                         <div class="catalog-name">${escapeHtml(item.name)}</div>
                         <div class="catalog-desc">${escapeHtml(item.description)}</div>
@@ -275,7 +275,7 @@ function renderServers() {
                     <div class="srv-info-label">СЕРВЕР</div>
                     <div class="srv-info-value mono">
                         ${escapeHtml(p.server || '')}
-                        <span class="srv-reveal" data-action="reveal-server">${sniHiddenNow ? '👁' : '🙈'}</span>
+                        <span class="srv-reveal" data-action="reveal-server">${sniHiddenNow ? '<i data-lucide="eye"></i>' : '<i data-lucide="eye-off"></i>'}</span>
                     </div>
                 </div>
                 <div class="srv-info-row"><div class="srv-info-label">ПОРТ</div><div class="srv-info-value mono">:${p.port}</div></div>
@@ -283,8 +283,8 @@ function renderServers() {
                 <div class="srv-info-row"><div class="srv-info-label">DELAY</div><div class="srv-info-value mono"><span data-delay>${lastDelay > 0 ? lastDelay + ' ms' : '—'}</span><span class="srv-info-sub">avg ${stats.avg > 0 ? stats.avg + 'ms' : '—'}</span></div></div>
             </div>
             <div class="srv-actions">
-                <button class="srv-btn" data-action="test">🧪 Тест</button>
-                <button class="srv-btn srv-btn-danger" data-action="remove">🗑 Удалить</button>
+                <button class="srv-btn" data-action="test"><i data-lucide="flask-conical"></i> Тест</button>
+                <button class="srv-btn srv-btn-danger" data-action="remove"><i data-lucide="trash-2"></i> Удалить</button>
             </div>
             <div class="srv-charts">
                 <div class="srv-chart-box">
@@ -431,15 +431,15 @@ function outboundDisplayName(tag) {
 function allOutboundOptions() {
     const opts = [];
     opts.push({ value: '', label: '— группа по умолчанию —' });
-    opts.push({ value: 'direct', label: '🚫 direct (напрямую)' });
-    opts.push({ value: 'block', label: '⛔ block (блокировка)' });
-    opts.push({ value: 'proxy-default', label: '⭐ default (общая группа)' });
+    opts.push({ value: 'direct', label: 'direct (напрямую)' });
+    opts.push({ value: 'block', label: 'block (блокировка)' });
+    opts.push({ value: 'proxy-default', label: '★ default (общая группа)' });
     for (const id of state.enabled) {
         const cat = catalogCache.find(c => c.id === id);
-        opts.push({ value: 'proxy-' + id, label: '📦 ' + (cat ? cat.name : id) });
+        opts.push({ value: 'proxy-' + id, label: (cat ? cat.name : id) });
     }
     for (const [name, g] of Object.entries(state.groups)) {
-        if (g.manual) opts.push({ value: 'proxy-' + name, label: '🔧 ' + (g.label || name) });
+        if (g.manual) opts.push({ value: 'proxy-' + name, label: '★ ' + (g.label || name) });
     }
     return opts;
 }
@@ -767,7 +767,7 @@ function renderCustomRules() {
         const summary = `
             <div class="rule-card-head">
                 <span class="rule-card-expand">${expanded ? '▼' : '▶'}</span>
-                <span class="rule-card-icon">📝</span>
+                <span class="rule-card-icon"><i data-lucide="pencil"></i></span>
                 <div class="rule-card-info">
                     <div class="rule-card-title">${escapeHtml(r.name || 'Без названия')}</div>
                     <div class="rule-card-sub">${domainsCount} доменов · ${cidrsCount} CIDR · → ${escapeHtml(routeLabel)}</div>
@@ -846,7 +846,7 @@ function renderCustomSRS() {
         const summary = `
             <div class="rule-card-head">
                 <span class="rule-card-expand">${expanded ? '▼' : '▶'}</span>
-                <span class="rule-card-icon">🌍</span>
+                <span class="rule-card-icon"><i data-lucide="globe"></i></span>
                 <div class="rule-card-info">
                     <div class="rule-card-title">${escapeHtml(s.name || 'Без названия')}</div>
                     <div class="rule-card-sub">${escapeHtml(s.url || '—')} · → ${escapeHtml(routeLabel)}</div>
@@ -1046,7 +1046,7 @@ function addAuthButtons() {
     logout.id = 'btn-logout';
     logout.className = 'btn';
     logout.title = 'Выйти';
-    logout.textContent = '🚪 Выйти';
+    logout.innerHTML = '<i data-lucide="log-out"></i> Выйти';
     logout.addEventListener('click', async () => {
         await fetch('/api/auth/logout', { method: 'POST' });
         window.location.href = '/';
@@ -1149,3 +1149,20 @@ document.addEventListener('DOMContentLoaded', () => {
     const devicesPage = document.querySelector('[data-page="devices"]');
     if (devicesPage) devicesPage.style.display = 'none';
 });
+
+// v4.6.0: автоматическая замена <i data-lucide="..."> на SVG
+// Работает для всех динамически созданных элементов (карточки, кнопки).
+(function initLucide() {
+    if (typeof lucide === 'undefined') {
+        console.warn('lucide.min.js не загружен');
+        return;
+    }
+    const refresh = () => { try { lucide.createIcons(); } catch(e) {} };
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', refresh);
+    } else {
+        refresh();
+    }
+    // Подхватываем динамически созданные элементы
+    new MutationObserver(refresh).observe(document.body, { childList: true, subtree: true });
+})();
