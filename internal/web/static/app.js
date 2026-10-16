@@ -1149,24 +1149,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const devicesPage = document.querySelector('[data-page="devices"]');
     if (devicesPage) devicesPage.style.display = 'none';
 });
-
-// v4.6.0: автоматическая замена <i data-lucide="..."> на SVG
-// Работает для всех динамически созданных элементов (карточки, кнопки).
-(function initLucide() {
-    if (typeof lucide === 'undefined') {
-        console.warn('lucide.min.js не загружен');
-        return;
-    }
-    const refresh = () => { try { lucide.createIcons(); } catch(e) {} };
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', refresh);
-    } else {
-        refresh();
-    }
-    // Подхватываем динамически созданные элементы
-    new MutationObserver(refresh).observe(document.body, { childList: true, subtree: true });
-})();
-
 // v4.7.0: сворачивание секции "Состояние кэша .srs"
 (function initSrsCacheToggle() {
     const KEY = 'sb_srs_cache_collapsed';
@@ -1199,3 +1181,11 @@ document.addEventListener('DOMContentLoaded', () => {
     // на случай, если секция подгрузится позже
     setTimeout(setup, 500);
 })();
+
+// v4.7.0: простая инициализация lucide (без MutationObserver)
+// После каждого render вызываем lucide.createIcons() вручную там, где нужно.
+document.addEventListener('DOMContentLoaded', () => {
+    if (typeof lucide !== 'undefined') {
+        setTimeout(() => { try { lucide.createIcons(); } catch(e) {} }, 100);
+    }
+});
