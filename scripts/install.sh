@@ -4,7 +4,7 @@
 set -e
 
 REPO="vitosamin/singbox-manager"
-RELEASE_TAG="v4.4.10"
+RELEASE_TAG="v4.5.0"
 MANAGER_BIN_PATH="/opt/bin/singbox-manager"
 SINGBOX_BIN_PATH="/opt/etc/sing-box/sing-box"
 INIT_PATH="/opt/etc/init.d/S99singbox-manager"
@@ -326,7 +326,8 @@ apply_rules() {
     done
     iptables -t nat -A SB_TCP -p tcp -m mark --mark "$FW_MARK" -j RETURN
     iptables -t nat -A SB_TCP -p tcp -j REDIRECT --to-ports "$REDIRECT_PORT"
-    iptables -t nat -I PREROUTING 1 -j SB_TCP
+    iptables -t nat -I PREROUTING 1 -i br0 -p tcp -j SB_TCP
+    iptables -t nat -I PREROUTING 2 -i nwg0 -p tcp -j SB_TCP
 
     # --- UDP (mangle TPROXY) ---
     iptables -t mangle -N SB_UDP_TRANSIT 2>/dev/null || true
@@ -338,7 +339,8 @@ apply_rules() {
     iptables -t mangle -A SB_UDP_TRANSIT -p udp --dport 67:68 -j RETURN
     iptables -t mangle -A SB_UDP_TRANSIT -p udp -m mark --mark "$FW_MARK" -j RETURN
     iptables -t mangle -A SB_UDP_TRANSIT -p udp -j TPROXY --on-port "$TPROXY_PORT" --tproxy-mark "$FW_MARK"
-    iptables -t mangle -I PREROUTING 1 -p udp -j SB_UDP_TRANSIT
+    iptables -t mangle -I PREROUTING 1 -i br0 -p udp -j SB_UDP_TRANSIT
+    iptables -t mangle -I PREROUTING 2 -i nwg0 -p udp -j SB_UDP_TRANSIT
 
     # --- Policy routing ---
     ip rule del fwmark "$FW_MARK" lookup "$ROUTE_TABLE" 2>/dev/null || true

@@ -311,7 +311,7 @@ func buildNatScript(excludeIPs []string) string {
 		sb.WriteString("iptables -t nat -D PREROUTING -i " + i + " -p tcp -j " + ChainTCP + " 2>/dev/null\n")
 	}
 	sb.WriteString("iptables -t nat -I PREROUTING 1 -i br0 -p tcp -j " + ChainTCP + "\n")
-	sb.WriteString("iptables -t nat -I PREROUTING 1 -i nwg0 -p tcp -j " + ChainTCP + "\n")
+	sb.WriteString("iptables -t nat -I PREROUTING 2 -i nwg0 -p tcp -j " + ChainTCP + "\n")
 	sb.WriteString("echo SB_TCP installed\n")
 	return sb.String()
 }
@@ -339,8 +339,8 @@ func buildMangleScript(excludeIPs []string) string {
 	for _, i := range []string{"br0", "br1", "br2", "nwg0", "nwg1", "wg0"} {
 		sb.WriteString("iptables -t mangle -D PREROUTING -i " + i + " -p udp -j " + ChainUDP + " 2>/dev/null\n")
 	}
-	sb.WriteString("iptables -t mangle -A PREROUTING -i br0 -p udp -j " + ChainUDP + "\n")
-	sb.WriteString("iptables -t mangle -A PREROUTING -i nwg0 -p udp -j " + ChainUDP + "\n\n")
+	sb.WriteString("iptables -t mangle -I PREROUTING 1 -i br0 -p udp -j " + ChainUDP + "\n")
+	sb.WriteString("iptables -t mangle -I PREROUTING 2 -i nwg0 -p udp -j " + ChainUDP + "\n\n")
 
 	sb.WriteString("while ip rule del fwmark " + TProxyMark + " table " + TProxyTable + " 2>/dev/null; do :; done\n")
 	sb.WriteString("ip rule add fwmark " + TProxyMark + " table " + TProxyTable + " 2>/dev/null\n")
