@@ -12,6 +12,7 @@ package watchdog
 import (
 	"fmt"
 	"net/http"
+	"os"
 	"sync/atomic"
 	"time"
 
@@ -24,7 +25,15 @@ const (
 	StartupGrace  = 60 * time.Second
 	MaxFailures   = 3
 	ClashAPIURL   = "http://127.0.0.1:9090/version"
+	MarkerPath    = "/opt/etc/sing-box/vpn.disabled"
 )
+
+// v4.8.1: проверяем маркер «VPN отключён пользователем».
+// Если маркер есть — watchdog НЕ должен считать отсутствие sing-box за падение.
+func isDisabled() bool {
+	_, err := os.Stat(MarkerPath)
+	return err == nil
+}
 
 var (
 	applyInProgress atomic.Bool
@@ -78,6 +87,11 @@ func Start() {
 		defer ticker.Stop()
 
 		for range ticker.C {
+			// v4.8.1: если VPN отключён пользователем — не проверяем sing-box
+			if isDisabled() {
+				failures = 0
+				continue
+			}
 			if isStartupGrace() {
 				failures = 0
 				continue
@@ -116,6 +130,11 @@ func checkSingBox() bool {
 // handleFailure — снимает iptables-правила.
 // НЕ ставит маркер vpn.disabled — это делает только Stop из UI.
 func handleFailure() {
+	// v4.8.1: если VPN отключён — ничего не делаем
+	if isDisabled() {
+		fmt.Println("[watchdog] VPN отключён (маркер) — пропускаем handleFailure")
+		return
+	}
 	fmt.Println("[watchdog] sing-box упал — снимаем iptables-правила")
 
 	if err := iptables.Cleanup(); err != nil {
