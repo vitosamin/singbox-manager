@@ -563,3 +563,34 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
     opacity: 0.5;
     cursor: not-allowed;
 }
+
+/* v4.6.0: SVG-иконки Lucide — общие правила */
+.btn svg,
+button svg,
+h3 svg,
+.hiw-title svg {
+    display: inline-block;
+    vertical-align: middle;
+    width: 16px;
+    height: 16px;
+    stroke: currentColor;
+    fill: none;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    margin-right: 4px;
+    flex-shrink: 0;
+}
+
+.topbar-actions button[data-theme-btn] svg {
+    margin-right: 0;
+}
+
+.brand-logo svg {
+    width: 22px;
+    height: 22px;
+    stroke: currentColor;
+    fill: none;
+    stroke-width: 2;
+    margin-right: 0;
+}
