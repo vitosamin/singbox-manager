@@ -19,6 +19,43 @@
 
 ---
 
+## 📸 Интерфейс
+
+<table>
+<tr>
+  <td width="50%" valign="top">
+    <img src="docs/screenshots/01-servers.png" alt="Серверы">
+    <br><em><b>Серверы</b> — карточки с задержкой, тестом, редактированием, графиками трафика.</em>
+  </td>
+  <td width="50%" valign="top">
+    <img src="docs/screenshots/02-rules.png" alt="Правила обхода">
+    <br><em><b>Правила обхода</b> — сворачиваемые секции: кэш <code>.srs</code>, каталог, свои правила, свои <code>.srs</code> URL.</em>
+  </td>
+</tr>
+<tr>
+  <td width="50%" valign="top">
+    <img src="docs/screenshots/03-custom-rules.png" alt="Свои правила">
+    <br><em><b>Свои правила</b> — домены и CIDR. Каждое правило можно привязать к своей группе.</em>
+  </td>
+  <td width="50%" valign="top">
+    <img src="docs/screenshots/04-priorities.png" alt="Приоритеты">
+    <br><em><b>Приоритеты</b> — порядок серверов в каждой группе. Первый — самый приоритетный.</em>
+  </td>
+</tr>
+<tr>
+  <td width="50%" valign="top">
+    <img src="docs/screenshots/05-dns.png" alt="DNS">
+    <br><em><b>DNS</b> — <code>dns-router</code> (AdGuard) + <code>dns-remote</code> (DoT через VPN).</em>
+  </td>
+  <td width="50%" valign="top">
+    <img src="docs/screenshots/06-settings.png" alt="Настройки">
+    <br><em><b>Настройки</b> — логи в RAM, рестарт sing-box, экспорт/импорт, смена пароля.</em>
+  </td>
+</tr>
+</table>
+
+---
+
 ## Возможности
 
 ### Управление серверами
@@ -27,6 +64,7 @@
 * Парсинг ссылок `vless://`, `trojan://`, `hysteria2://`, `ss://`.
 * Автоматическое имя сервера из `#remark` (флаг, описание).
 * Тест задержки в один клик.
+* **Редактирование сервера** — изменение имени, хоста, порта, UUID, SNI, Reality-ключей без пересоздания (тег сохраняется, группы и правила не ломаются).
 
 ### Раздельная маршрутизация
 
